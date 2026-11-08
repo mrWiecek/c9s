@@ -28,6 +28,8 @@ pub struct TenantInfo {
 const TENANTS_API_VERSION: &str = "2022-12-01";
 const POLICY_API_VERSION: &str = "2023-04-01";
 const ROLE_API_VERSION: &str = "2022-04-01";
+/// Privileged Identity Management (role eligibility).
+const PIM_API_VERSION: &str = "2020-10-01";
 
 /// What a node in the hierarchy is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,6 +202,37 @@ impl ManagementGroupClient {
         }
     }
 
+    /// PIM: role eligibility instances at, above and below `scope` (an ARM
+    /// ID: the tenant root group, a management group or a subscription),
+    /// as ARM returns them (`properties.principalId`, `roleDefinitionId`,
+    /// `scope`, `endDateTime`, `memberType`...). Reader can read them.
+    pub async fn role_eligibilities(&self, scope: &str) -> Result<Vec<Value>> {
+        let _t = timing::timer("azure.role_eligibilities");
+        let mut url = format!(
+            "{}{}/providers/Microsoft.Authorization/roleEligibilityScheduleInstances?api-version={}",
+            self.endpoint,
+            scope.trim_end_matches('/'),
+            PIM_API_VERSION
+        );
+        let mut items = Vec::new();
+        loop {
+            let page = self.get(&url).await?;
+            items.extend(
+                page.get("value")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .cloned(),
+            );
+            match page.get("nextLink").and_then(Value::as_str) {
+                Some(next) if !next.is_empty() => {
+                    url = crate::client::next_page(next, &self.endpoint)?
+                }
+                _ => return Ok(items),
+            }
+        }
+    }
+
     /// One role definition by any of its IDs (it can be written at any
     /// scope: `/subscriptions/…/providers/Microsoft.Authorization/roleDefinitions/<guid>`).
     pub async fn role_definition(&self, id: &str) -> Result<Value> {
@@ -362,6 +395,37 @@ mod tests {
             client.policy_object("/subscriptions/s").await.is_err(),
             "only policy definitions and initiatives"
         );
+    }
+
+    #[tokio::test]
+    async fn pim_eligibilities_are_listed_across_pages() {
+        use std::sync::{Arc, Mutex};
+        let me = Arc::new(Mutex::new(String::new()));
+        let base = me.clone();
+        let (endpoint, _) = serve_paths(move |path, _| {
+            assert!(
+                path.starts_with(
+                    "/providers/Microsoft.Management/managementGroups/t1/providers/Microsoft.Authorization/roleEligibilityScheduleInstances?api-version=2020-10-01"
+                ),
+                "{path}"
+            );
+            if path.contains("skiptoken") {
+                return ok(json!({"value": [{"id": "e2", "properties": {}}]}));
+            }
+            let next = format!(
+                "{}/providers/Microsoft.Management/managementGroups/t1/providers/Microsoft.Authorization/roleEligibilityScheduleInstances?api-version=2020-10-01&$skiptoken=2",
+                base.lock().unwrap()
+            );
+            ok(json!({"value": [{"id": "e1", "properties": {}}], "nextLink": next}))
+        })
+        .await;
+        *me.lock().unwrap() = endpoint.clone();
+        let items = client(&endpoint)
+            .role_eligibilities("/providers/Microsoft.Management/managementGroups/t1")
+            .await
+            .unwrap();
+        let ids: Vec<&str> = items.iter().filter_map(|i| i["id"].as_str()).collect();
+        assert_eq!(ids, ["e1", "e2"]);
     }
 
     #[tokio::test]

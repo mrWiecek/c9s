@@ -165,6 +165,8 @@ pub fn help_lines() -> Vec<Line<'static>> {
         l("            from management groups above, at the scope, and below it (resource"),
         l("            groups, resources). C custom role, B built-in. Enter opens the role;"),
         l("            d the assignment. / filters by role, principal, type or scope."),
+        l("            PIM eligible assignments show \"eligible\" (until when); /eligible lists"),
+        l("            only them, /active the rest. They count in p and :access too."),
         l("  p         (in :ra) everything the row's principal can do, across the tenant:"),
         l("            its own assignments and its groups' (nested too), \"via <group>\""),
         l("  :access <name|sign-in|app id|object id>   the same for any principal"),

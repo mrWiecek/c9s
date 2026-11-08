@@ -12,6 +12,20 @@ Release process, audit and rollback: [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-11-08
+
+### Added
+- **PIM eligible role assignments.** `:ra`, `p` and `:access` now show
+  eligible assignments (Privileged Identity Management) next to the active
+  ones, marked *eligible* or *eligible until <date>*; the title counts
+  them. `/eligible` lists only them, `/active` the rest. A principal's
+  access includes what it is eligible for directly and through its groups,
+  so someone eligible for Owner no longer looks less privileged than they
+  are. Read from ARM (`roleEligibilityScheduleInstances`) at the tenant
+  root, else per subscription; Reader is enough. Ended eligibilities are
+  left out. `d` on an eligible row says what it is (PIM eligibility isn't
+  a role assignment resource).
+
 ## [1.8.0] - 2026-11-08
 
 ### Changed
@@ -864,7 +878,8 @@ Already in the codebase before this changelog was started:
 - Resource groups and resources are not yet shown from the cache before Azure
   answers (M1 step 4).
 
-[Unreleased]: https://github.com/mrWiecek/c9s/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/mrWiecek/c9s/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/mrWiecek/c9s/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/mrWiecek/c9s/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/mrWiecek/c9s/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/mrWiecek/c9s/compare/v1.6.0...v1.6.1

@@ -878,6 +878,8 @@ impl Fetcher for GraphFetcher {
                 let arm = self.management_groups.clone();
                 let ids = subscription_ids.clone();
                 let assignments = matches!(request, LoadRequest::RoleAssignments { .. });
+                let pim = self.management_groups.clone();
+                let pim_subscriptions = subscription_ids.clone();
                 return async move {
                     let _t = timing::timer(if assignments {
                         "azure.role_assignments"
@@ -918,11 +920,28 @@ impl Fetcher for GraphFetcher {
                         }
                         _ => rows,
                     };
+                    // PIM: eligible assignments beside the active ones.
+                    let mut notice = notice;
+                    let mut eligible = Vec::new();
+                    if assignments && rows.is_ok() {
+                        if let Some(arm) = &pim {
+                            let (found, problem) =
+                                role_eligibilities(arm, tenant.clone(), pim_subscriptions).await;
+                            eligible = found;
+                            if let Some(problem) = problem {
+                                notice = Some(match notice {
+                                    Some(n) => format!("{n}; {problem}"),
+                                    None => problem,
+                                });
+                            }
+                        }
+                    }
                     let data = rows.map(|rows| {
                         if assignments {
                             LoadedData::RoleAssignments(
                                 rows.iter()
                                     .filter_map(crate::rbac::RoleAssignment::from_row)
+                                    .chain(eligible)
                                     .collect(),
                             )
                         } else {
@@ -1352,6 +1371,69 @@ fn has_built_in_roles(rows: &Result<Vec<serde_json::Value>, String>) -> bool {
 
 /// Resource Graph's role definitions plus ARM's, each role (by GUID) once.
 /// Either source alone is enough; both failing reports the first error.
+/// PIM eligible role assignments: from the tenant root group (at and below
+/// it), else from each subscription. A note when some or all of them
+/// couldn't be read; the active assignments show either way.
+async fn role_eligibilities(
+    arm: &ManagementGroupClient,
+    tenant: Option<String>,
+    subscriptions: Vec<String>,
+) -> (Vec<crate::rbac::RoleAssignment>, Option<String>) {
+    let now = chrono::Utc::now().timestamp();
+    let parse = |items: &[serde_json::Value]| -> Vec<crate::rbac::RoleAssignment> {
+        items
+            .iter()
+            .filter_map(|i| crate::rbac::RoleAssignment::from_eligibility(i, now))
+            .collect()
+    };
+    if let Some(tenant) = &tenant {
+        let root = format!("/providers/Microsoft.Management/managementGroups/{tenant}");
+        match arm.role_eligibilities(&root).await {
+            Ok(items) => return (parse(&items), None),
+            Err(e) => warn!("PIM eligibility at the tenant root: {e}; trying subscriptions"),
+        }
+    }
+    if subscriptions.is_empty() {
+        return (
+            vec![],
+            Some("PIM eligible assignments unavailable (no access at the tenant root)".into()),
+        );
+    }
+    let total = subscriptions.len();
+    let results: Vec<Result<Vec<serde_json::Value>, AzureError>> = stream::iter(subscriptions)
+        .map(|s| async move { arm.role_eligibilities(&format!("/subscriptions/{s}")).await })
+        .buffer_unordered(8)
+        .collect()
+        .await;
+    let mut seen = HashSet::new();
+    let mut found = Vec::new();
+    let mut failed = 0;
+    let mut first_error = None;
+    for result in results {
+        match result {
+            Ok(items) => {
+                for a in parse(&items) {
+                    if seen.insert(a.id.to_ascii_lowercase()) {
+                        found.push(a);
+                    }
+                }
+            }
+            Err(e) => {
+                failed += 1;
+                first_error.get_or_insert(e.to_string());
+            }
+        }
+    }
+    let note = first_error.map(|e| {
+        if failed == total {
+            format!("PIM eligible assignments unavailable: {e}")
+        } else {
+            format!("PIM eligible assignments missing for {failed} of {total} subscriptions: {e}")
+        }
+    });
+    (found, note)
+}
+
 fn merge_role_rows(
     graph: Result<Vec<serde_json::Value>, String>,
     arm: c9s_azure::Result<Vec<serde_json::Value>>,
@@ -1611,6 +1693,44 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn pim_eligibility_falls_back_to_subscriptions() {
+        use c9s_azure::testing::{error, ok, serve_paths, StaticToken};
+        use serde_json::json;
+        let item = |id: &str, scope: &str| {
+            json!({"id": id, "properties": {"scope": scope, "principalId": "p1",
+                "principalType": "User", "memberType": "Direct",
+                "roleDefinitionId": "/providers/Microsoft.Authorization/roleDefinitions/r1"}})
+        };
+        let (endpoint, _) = serve_paths(move |path, _| {
+            if path.starts_with("/providers/Microsoft.Management") {
+                return error(403, "no access at the root");
+            }
+            if path.starts_with("/subscriptions/s1/") {
+                // The MG-level one comes back from both subscriptions.
+                return ok(json!({"value": [item("e-mg", "/providers/Microsoft.Management/managementGroups/m"), item("e-s1", "/subscriptions/s1")]}));
+            }
+            if path.starts_with("/subscriptions/s2/") {
+                return ok(json!({"value": [item("e-mg", "/providers/Microsoft.Management/managementGroups/m")]}));
+            }
+            error(403, "denied")
+        })
+        .await;
+        let arm = ManagementGroupClient::with_endpoint(endpoint, Arc::new(StaticToken("t".into())));
+        let (found, note) = role_eligibilities(
+            &arm,
+            Some("t".into()),
+            vec!["s1".into(), "s2".into(), "s3".into()],
+        )
+        .await;
+        let mut ids: Vec<&str> = found.iter().map(|a| a.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, ["e-mg", "e-s1"], "each once");
+        assert!(found.iter().all(|a| a.eligible));
+        let note = note.unwrap();
+        assert!(note.contains("missing for 1 of 3 subscriptions"), "{note}");
+    }
     use std::time::Duration;
 
     /// Returns `n` resource groups after `delay`, where `n` is the number of

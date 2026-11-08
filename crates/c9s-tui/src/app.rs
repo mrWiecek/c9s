@@ -1539,6 +1539,21 @@ impl TuiApp {
 
     /// `d` in `:ra` (the assignment itself) and `:role` (the definition).
     fn open_rbac_detail(&mut self) {
+        // A PIM eligibility isn't a role assignment resource: say what it
+        // is instead of failing to load it.
+        if let Some(row) = self.state().selected_role_assignment() {
+            if row.assignment.eligible {
+                let ends = match row.assignment.ends.get(..10) {
+                    Some(day) => format!("until {day}"),
+                    None => "permanently".into(),
+                };
+                self.state_mut().notice = Some(format!(
+                    "PIM eligible {ends}: {} can activate {} at {} (Entra PIM in the Portal)",
+                    row.principal_name, row.role_name, row.scope_label
+                ));
+                return;
+            }
+        }
         let resource = match self.state().view {
             ViewMode::RoleAssignments => self.state().selected_role_assignment().map(|r| {
                 let a = r.assignment;

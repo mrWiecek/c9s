@@ -30,7 +30,10 @@ Cloud or AWS alone.
    lists them and their resources.
 3. The management group tree needs **Management Group Reader** at the
    tenant root; without it c9s shows the subscriptions.
-4. Policy views read compliance through Resource Graph (Reader is enough).
+4. PIM eligible role assignments come from ARM
+   (`roleEligibilityScheduleInstances`): Reader at the tenant root shows
+   them all, else c9s reads each subscription it can.
+5. Policy views read compliance through Resource Graph (Reader is enough).
    Group and application names come from Microsoft Graph and need the
    directory read access members have by default.
 

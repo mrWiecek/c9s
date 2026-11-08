@@ -399,3 +399,67 @@ async fn a_principals_access_direct_and_through_groups() {
         .unwrap()
         .contains("No principal named nobody"));
 }
+
+#[tokio::test]
+async fn pim_eligible_assignments_are_shown_and_counted() {
+    let mut app = setup();
+    let mut loads = app.take_load_receiver().unwrap();
+    command(&mut app, "ra all").await;
+    settle(&mut app, &mut loads).await;
+
+    // Ada is eligible for Reader at the subscription until 2099; her group
+    // (principal-2) is eligible for Owner, permanently.
+    let mut eligible = assignment(7, "/subscriptions/s1", READER, "User");
+    eligible.principal_id = "principal-1".into();
+    eligible.eligible = true;
+    eligible.ends = "2099-01-01T00:00:00Z".into();
+    let mut via_group = assignment(8, &mg("platform"), OWNER, "Group");
+    via_group.principal_id = "principal-2".into();
+    via_group.eligible = true;
+    let pim = [eligible, via_group];
+    app.state_mut().role_assignments.extend(pim.clone());
+
+    let text = screen(&mut app);
+    assert!(text.contains("eligible until 2099-01-01"), "{text}");
+    assert!(text.contains("2 PIM eligible"), "{text}");
+
+    // /eligible keeps only them; /active the others.
+    app.state_mut().filter = "eligible".into();
+    assert_eq!(app.state().role_assignment_rows().len(), 2);
+    app.state_mut().filter = "active".into();
+    assert!(app
+        .state()
+        .role_assignment_rows()
+        .iter()
+        .all(|r| !r.assignment.eligible));
+    app.state_mut().filter.clear();
+
+    // d on an eligible one explains it instead of failing to load it.
+    let at = app
+        .state()
+        .role_assignment_rows()
+        .iter()
+        .position(|r| r.assignment.id.ends_with("ra7"))
+        .unwrap();
+    app.state_mut().list_state.selected = at;
+    press(&mut app, KeyCode::Char('d')).await;
+    assert_eq!(app.state().view, ViewMode::RoleAssignments);
+    let notice = app.state().notice.clone().unwrap_or_default();
+    assert!(notice.contains("PIM eligible until 2099-01-01"), "{notice}");
+
+    // Ada's access: her own eligibility and her group's.
+    press(&mut app, KeyCode::Char('p')).await;
+    settle(&mut app, &mut loads).await;
+    // (The fake API's reload has no PIM rows: put them back.)
+    app.state_mut().role_assignments.extend(pim);
+    let rows = app.state().role_assignment_rows();
+    let eligible: Vec<(&str, &str)> = rows
+        .iter()
+        .filter(|r| r.assignment.eligible)
+        .map(|r| (r.role_name.as_str(), r.origin_label.as_str()))
+        .collect();
+    assert_eq!(
+        eligible,
+        [("Owner", "via Group principal-2"), ("Reader", "direct")]
+    );
+}

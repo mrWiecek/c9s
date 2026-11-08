@@ -1035,6 +1035,18 @@ fn draw_role_assignments(f: &mut Frame, area: Rect, app: &mut TuiApp) -> Result<
         0,
         30,
     );
+    // PIM: eligible assignments say so (and until when); none: no column.
+    let pim_w = if rows.iter().any(|r| r.assignment.eligible) {
+        widest(
+            &mut rows
+                .iter()
+                .map(|r| r.assignment.pim_label().chars().count()),
+            8,
+            26,
+        )
+    } else {
+        0
+    };
     let viewport = area.height.saturating_sub(2) as usize;
     let mut list_state = state.list_state.clone();
     let visible = list_state.visible_range(rows.len(), viewport);
@@ -1052,6 +1064,10 @@ fn draw_role_assignments(f: &mut Frame, area: Rect, app: &mut TuiApp) -> Result<
                 Span::styled(
                     cell(&r.role_name, name_col),
                     Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    cell(&a.pim_label(), pim_w),
+                    Style::default().fg(t.highlight),
                 ),
                 Span::styled(
                     cell(&a.principal_type, type_w),
@@ -1091,6 +1107,12 @@ fn draw_role_assignments(f: &mut Frame, area: Rect, app: &mut TuiApp) -> Result<
             rows.len(),
             if rows.len() == 1 { "" } else { "s" }
         )
+    };
+    let eligible = rows.iter().filter(|r| r.assignment.eligible).count();
+    let summary = if eligible > 0 {
+        format!("{summary}; {eligible} PIM eligible")
+    } else {
+        summary
     };
     let title = if state.filter_mode {
         format!("{heading} ({}) - Filter: {}_", rows.len(), state.filter)
