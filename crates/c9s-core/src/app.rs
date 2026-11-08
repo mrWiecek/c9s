@@ -463,6 +463,8 @@ impl App {
         state.app_open = Some(row);
         state.app_tab = Default::default();
         state.detail_scroll = 0;
+        state.clear_detail_search();
+        state.app_field = crate::app_view::default_field(&crate::app_view::overview_fields(state));
         state.view = ViewMode::AppDetail;
         self.request(request);
     }

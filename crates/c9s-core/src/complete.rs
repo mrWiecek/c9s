@@ -165,6 +165,39 @@ pub fn complete(input: &str, state: &AppState) -> Completion {
 
 /// `input` with the word starting at `start` replaced by `text`, followed by
 /// a space unless more is expected (a `key=` to fill in).
+/// What Enter does with the suggestions: the command line with the
+/// highlighted one in place of the word being typed, and whether that still
+/// needs a value (`type=`, `env=`) rather than running. `None`: run the
+/// line as typed (no suggestions; nothing typed and none picked with ↑/↓;
+/// or the word already is one of them).
+pub fn enter(
+    input: &str,
+    selection: usize,
+    picked: bool,
+    state: &AppState,
+) -> Option<(String, bool)> {
+    let completion = complete(input, state);
+    let word = &input[completion.start.min(input.len())..];
+    if completion.items.is_empty() {
+        return None;
+    }
+    if !picked
+        && (word.is_empty()
+            || completion
+                .items
+                .iter()
+                .any(|s| s.text.eq_ignore_ascii_case(word)))
+    {
+        return None;
+    }
+    let s = completion
+        .items
+        .get(selection)
+        .or(completion.items.first())?;
+    let needs_more = s.text.ends_with('=') || s.text.ends_with(',');
+    Some((apply(input, completion.start, &s.text), needs_more))
+}
+
 pub fn apply(input: &str, start: usize, text: &str) -> String {
     let start = start.min(input.len());
     let space = if text.ends_with('=') || text.ends_with(',') {

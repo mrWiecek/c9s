@@ -170,6 +170,12 @@ impl TuiApp {
             return self.handle_palette_key(key).await;
         }
 
+        // `o` asked which page to open
+        if self.state().portal_choice.is_some() {
+            self.handle_portal_choice_key(key);
+            return Ok(true);
+        }
+
         // Typing a search in the detail view (after `/`)
         if self.state().detail_search_input.is_some() {
             self.handle_search_key(key);
@@ -237,7 +243,8 @@ impl TuiApp {
                     state.clear_error();
                 } else if !state.filter.is_empty() {
                     state.clear_filter();
-                } else if state.view == ViewMode::ResourceDetail && !state.detail_search.is_empty()
+                } else if matches!(state.view, ViewMode::ResourceDetail | ViewMode::AppDetail)
+                    && !state.detail_search.is_empty()
                 {
                     // First Esc clears the search highlights, the next goes back.
                     state.clear_detail_search();
@@ -247,7 +254,12 @@ impl TuiApp {
                 }
                 Ok(true)
             }
-            KeyCode::Char('/') if self.state().view == ViewMode::ResourceDetail => {
+            KeyCode::Char('/')
+                if matches!(
+                    self.state().view,
+                    ViewMode::ResourceDetail | ViewMode::AppDetail
+                ) =>
+            {
                 debug!("Start search");
                 let state = self.state_mut();
                 state.detail_search_origin = (state.detail_scroll, state.detail_match);
@@ -310,8 +322,26 @@ impl TuiApp {
                 Ok(true)
             }
             KeyCode::Enter => {
+                // A suggestion is on offer for the word being typed: Enter
+                // takes it (as Tab would) and runs the command, unless it
+                // still needs a value (`type=`).
+                let state = self.state();
+                if let Some((input, needs_more)) = complete::enter(
+                    &state.command_input,
+                    state.command_selection,
+                    state.command_picked,
+                    state,
+                ) {
+                    let state = self.state_mut();
+                    state.command_input = input;
+                    state.command_selection = 0;
+                    state.command_picked = false;
+                    if needs_more {
+                        return Ok(true);
+                    }
+                }
                 debug!("Execute command");
-                let command_input = self.state().command_input.clone();
+                let command_input = self.state().command_input.trim_end().to_string();
                 self.state_mut().exit_command_mode();
                 self.execute_command(&command_input).await?;
                 Ok(true)
@@ -333,6 +363,7 @@ impl TuiApp {
                     let state = self.state_mut();
                     state.command_input = input;
                     state.command_selection = 0;
+                    state.command_picked = false;
                 }
                 Ok(true)
             }
@@ -343,6 +374,7 @@ impl TuiApp {
                     let step = if key.code == KeyCode::Down { 1 } else { n - 1 };
                     let state = self.state_mut();
                     state.command_selection = (state.command_selection + step) % n;
+                    state.command_picked = true;
                 }
                 Ok(true)
             }
@@ -1320,6 +1352,19 @@ impl TuiApp {
     /// Move the cursor of a detail tab with rows (Tags, Policy) and keep it
     /// on screen. `false` when the tab has no rows (the caller scrolls).
     fn move_detail_cursor(&mut self, to: impl Fn(usize, usize) -> usize) -> bool {
+        // An application's Overview: the cursor walks its fields.
+        if self.state().view == ViewMode::AppDetail
+            && self.state().app_tab == c9s_core::state::AppTab::Overview
+        {
+            let fields = c9s_core::app_view::overview_fields(self.state());
+            if fields.is_empty() {
+                return false;
+            }
+            let state = self.state_mut();
+            state.app_field = to(state.app_field, fields.len()).min(fields.len() - 1);
+            state.detail_scroll_to = Some(fields[state.app_field].line);
+            return true;
+        }
         let state = self.state_mut();
         let Some(n) = state.detail_rows().filter(|n| *n > 0) else {
             return false;
@@ -1530,6 +1575,9 @@ impl TuiApp {
 
     /// Copy the selected item's ARM ID to the clipboard (`y`).
     fn copy_selected_id(&mut self) {
+        if self.copy_app_field() {
+            return;
+        }
         let Some(id) = self.state().selected_arm_id() else {
             return;
         };
@@ -1543,8 +1591,116 @@ impl TuiApp {
         self.state_mut().notice = Some(notice);
     }
 
+    /// On an application's Overview, copy the selected field (`y`, `c`).
+    /// Returns whether it did.
+    fn copy_app_field(&mut self) -> bool {
+        if self.state().view != ViewMode::AppDetail
+            || self.state().app_tab != c9s_core::state::AppTab::Overview
+        {
+            return false;
+        }
+        let fields = c9s_core::app_view::overview_fields(self.state());
+        let Some(field) = fields.get(self.state().app_field.min(fields.len().saturating_sub(1)))
+        else {
+            return false;
+        };
+        let value = c9s_core::safe_text::clean(&field.value).into_owned();
+        let what = if field.label.is_empty() {
+            "it".to_string()
+        } else {
+            field.label.to_lowercase()
+        };
+        let notice = match self.desktop.copy(&value) {
+            Ok(()) => format!("Copied {what}: {value}"),
+            Err(e) => format!("Could not copy ({e}): {value}"),
+        };
+        self.state_mut().notice = Some(notice);
+        true
+    }
+
+    /// The pages `o` can open for an application: its registration, its
+    /// enterprise application and, for a managed identity, its Azure
+    /// resource; with the section each belongs to.
+    fn app_pages(
+        &self,
+        row: &c9s_core::apps::AppRow,
+    ) -> Vec<(c9s_core::app_view::Section, String, String)> {
+        use c9s_core::app_view::Section;
+        let tenant = self.state().portal_tenant();
+        let mut pages = Vec::new();
+        if row.app.is_some() {
+            if let Some(url) =
+                detail::entra_portal_url("application", &row.app_id, &row.app_id, tenant.as_deref())
+            {
+                pages.push((Section::Registration, "App registration".to_string(), url));
+            }
+        }
+        if let Some(sp) = &row.sp {
+            if let Some(url) =
+                detail::entra_portal_url("servicePrincipal", &sp.id, &row.app_id, tenant.as_deref())
+            {
+                pages.push((
+                    Section::EnterpriseApp,
+                    "Enterprise application".to_string(),
+                    url,
+                ));
+            }
+        }
+        if let Some(url) = c9s_core::app_view::managed_identity_url(row, self.state()) {
+            let what = match row.managed_identity().and_then(|m| m.user_assigned) {
+                Some(true) => "Azure resource (the user-assigned identity)",
+                Some(false) => "Azure resource (what the identity belongs to)",
+                None => "Azure resource",
+            };
+            pages.push((Section::Resource, what.to_string(), url));
+        }
+        pages
+    }
+
+    /// Keys while `o` asks which page to open: ↑/↓ or j/k choose, 1-9 or
+    /// Enter open, Esc cancels.
+    fn handle_portal_choice_key(&mut self, key: KeyEvent) {
+        let Some((pages, selected)) = self.state().portal_choice.clone() else {
+            return;
+        };
+        let chosen = match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.state_mut().portal_choice = None;
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                self.state_mut().portal_choice =
+                    Some((pages.clone(), (selected + 1) % pages.len()));
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
+                let up = (selected + pages.len() - 1) % pages.len();
+                self.state_mut().portal_choice = Some((pages.clone(), up));
+                return;
+            }
+            KeyCode::Enter | KeyCode::Char('o') => selected,
+            KeyCode::Char(c @ '1'..='9') => {
+                let i = c as usize - '1' as usize;
+                if i >= pages.len() {
+                    return;
+                }
+                i
+            }
+            _ => return,
+        };
+        self.state_mut().portal_choice = None;
+        let (name, url) = pages[chosen].clone();
+        self.open_url(&url, &format!("the Azure Portal ({name})"));
+    }
+
     /// The detail view's current lines as plain text, for searching.
     fn detail_texts(&self) -> Vec<String> {
+        if self.state().view == ViewMode::AppDetail {
+            return c9s_core::app_view::app_lines(self.state())
+                .iter()
+                .map(|l| l.iter().map(|(t, _)| t.as_str()).collect())
+                .collect();
+        }
         crate::ui::detail_lines(self.state())
             .iter()
             .map(|l| l.to_string())
@@ -1706,14 +1862,35 @@ impl TuiApp {
             ViewMode::AppDetail => self.state().app_open.clone(),
             _ => None,
         };
-        // A managed identity opens on its Azure resource: the
-        // user-assigned identity, or what a system-assigned one belongs to.
-        if let Some(url) = app
-            .as_ref()
-            .and_then(|a| c9s_core::app_view::managed_identity_url(a, self.state()))
-        {
-            self.open_url(&url, "the Azure Portal");
-            return;
+        // An application: its registration, its enterprise application
+        // or, for a managed identity, its Azure resource. With more than
+        // one, ask which (the selected field's page first).
+        if let Some(row) = &app {
+            let pages = self.app_pages(row);
+            match pages.len() {
+                0 => {}
+                1 => {
+                    let (_, name, url) = &pages[0];
+                    self.open_url(url, &format!("the Azure Portal ({name})"));
+                    return;
+                }
+                _ => {
+                    let preferred = if self.state().view == ViewMode::AppDetail
+                        && self.state().app_tab == c9s_core::state::AppTab::Overview
+                    {
+                        let fields = c9s_core::app_view::overview_fields(self.state());
+                        fields
+                            .get(self.state().app_field)
+                            .and_then(|f| pages.iter().position(|(s, _, _)| *s == f.section))
+                            .unwrap_or(0)
+                    } else {
+                        0
+                    };
+                    let choices = pages.into_iter().map(|(_, n, u)| (n, u)).collect();
+                    self.state_mut().portal_choice = Some((choices, preferred));
+                    return;
+                }
+            }
         }
         let directory = match self.state().view {
             ViewMode::AppList | ViewMode::AppDetail => app
@@ -2143,6 +2320,13 @@ impl TuiApp {
                 return Ok(true);
             }
             KeyCode::Char('c') => {
+                // An application's Overview: the selected field.
+                if !self.copy_app_field() {
+                    self.copy_view();
+                }
+                return Ok(true);
+            }
+            KeyCode::Char('C') => {
                 self.copy_view();
                 return Ok(true);
             }
@@ -2192,7 +2376,19 @@ impl TuiApp {
                 let state = self.state_mut();
                 state.app_tab = next;
                 state.detail_scroll = 0;
+                state.detail_match = None;
                 return Ok(true);
+            }
+            match key.code {
+                KeyCode::Char('n') => {
+                    self.search_step(true);
+                    return Ok(true);
+                }
+                KeyCode::Char('N') => {
+                    self.search_step(false);
+                    return Ok(true);
+                }
+                _ => {}
             }
         }
         if matches!(self.state().view, ViewMode::AppList | ViewMode::AppDetail)

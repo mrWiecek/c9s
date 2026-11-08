@@ -66,6 +66,10 @@ pub struct AppState {
     /// Selected autocomplete suggestion in command mode
     pub command_selection: usize,
 
+    /// Whether ↑/↓ chose the suggestion (Enter then takes it even for an
+    /// empty word)
+    pub command_picked: bool,
+
     /// The command palette (Ctrl+P), while open
     pub palette: Option<crate::palette::Palette>,
 
@@ -116,6 +120,14 @@ pub struct AppState {
     pub app_open: Option<crate::apps::AppRow>,
     pub app_detail: Option<(String, crate::apps::AppDetail)>,
     pub app_tab: AppTab,
+
+    /// The selected field on an application's Overview (`j`/`k`; `y`/`c`
+    /// copy it, `o` offers its page first)
+    pub app_field: usize,
+
+    /// `o` with several pages to open: their names and links, and the one
+    /// highlighted
+    pub portal_choice: Option<(Vec<(String, String)>, usize)>,
 
     /// Every group in the directory, once loaded
     pub groups: Vec<c9s_azure::directory::Group>,
@@ -2068,6 +2080,7 @@ impl AppState {
         self.command_mode = true;
         self.command_input.clear();
         self.command_selection = 0;
+        self.command_picked = false;
     }
 
     /// Exit command mode
@@ -2080,12 +2093,14 @@ impl AppState {
     pub fn command_push(&mut self, c: char) {
         self.command_input.push(c);
         self.command_selection = 0;
+        self.command_picked = false;
     }
 
     /// Remove last character from command input
     pub fn command_pop(&mut self) {
         self.command_input.pop();
         self.command_selection = 0;
+        self.command_picked = false;
     }
 }
 

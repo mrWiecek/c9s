@@ -12,6 +12,35 @@ Release process, audit and rollback: [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-08
+
+### Changed
+- **Enter takes the highlighted suggestion.** On the command line, with
+  suggestions showing for the word being typed, Enter now puts the
+  highlighted one in (as Tab does) and runs the command: `:res tmp` Enter
+  opens the resources of the matching subscription, no Tab needed. ↑/↓
+  still choose another. Enter runs the line as typed when nothing is typed
+  after the command (`:res ` = where you are) or the word already is a
+  suggestion; a suggestion that still needs a value (`type=`) is filled in
+  and waits for it.
+
+## [1.7.0] - 2026-11-06
+
+### Added
+- **Copy any field of an application's Overview.** `↑↓`/`j`/`k` select a
+  field (object IDs, resource ID, resource group, subscription, redirect
+  URIs...); `y` or `c` copies it. The cursor starts on the app ID, so `y`
+  still copies it first; `C` copies the whole tab.
+- **`o` asks which page to open** when an application has several: the app
+  registration, the enterprise application, or a managed identity's Azure
+  resource. The selected field's page is offered first; Enter or `1`-`9`
+  opens, Esc cancels.
+
+### Fixed
+- **Search (`/`) works in an application's tabs**, the JSON tab included:
+  matches are highlighted, `n`/`N` step through them, Esc clears it. It
+  only worked in the resource detail before.
+
 ## [1.6.1] - 2026-11-06
 
 ### Security
@@ -835,7 +864,9 @@ Already in the codebase before this changelog was started:
 - Resource groups and resources are not yet shown from the cache before Azure
   answers (M1 step 4).
 
-[Unreleased]: https://github.com/mrWiecek/c9s/compare/v1.6.1...HEAD
+[Unreleased]: https://github.com/mrWiecek/c9s/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/mrWiecek/c9s/compare/v1.7.0...v1.8.0
+[1.7.0]: https://github.com/mrWiecek/c9s/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/mrWiecek/c9s/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/mrWiecek/c9s/compare/v1.5.2...v1.6.0
 [1.5.2]: https://github.com/mrWiecek/c9s/compare/v1.5.1...v1.5.2

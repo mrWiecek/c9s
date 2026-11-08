@@ -59,6 +59,11 @@ pub fn draw(f: &mut Frame, app: &mut TuiApp) -> Result<()> {
         draw_palette(f, f.area(), app);
     }
 
+    // `o` asking which page to open
+    if app.state().portal_choice.is_some() {
+        draw_portal_choice(f, app);
+    }
+
     // Draw error overlay if present
     if app.state().error.is_some() {
         draw_error_overlay(f, app);
@@ -742,7 +747,7 @@ fn draw_app(f: &mut Frame, area: Rect, app: &mut TuiApp) -> Result<()> {
         Tone::Warn => Style::default().fg(t.highlight),
         Tone::Bad => Style::default().fg(t.error).add_modifier(Modifier::BOLD),
     };
-    let lines: Vec<Line> = c9s_core::app_view::app_lines(state)
+    let mut lines: Vec<Line> = c9s_core::app_view::app_lines(state)
         .into_iter()
         .map(|l| {
             Line::from(
@@ -752,13 +757,23 @@ fn draw_app(f: &mut Frame, area: Rect, app: &mut TuiApp) -> Result<()> {
             )
         })
         .collect();
+    highlight_search(&mut lines, state);
+    // The Overview's selected field: y and c copy it.
+    if state.app_tab == AppTab::Overview {
+        let fields = c9s_core::app_view::overview_fields(state);
+        if let Some(field) = fields.get(state.app_field.min(fields.len().saturating_sub(1))) {
+            if let Some(line) = lines.get_mut(field.line) {
+                *line = std::mem::take(line).patch_style(t.selection());
+            }
+        }
+    }
     let loading = if state.open_app_detail().is_none() && state.loading {
         " · loading details…"
     } else {
         ""
     };
     let block = Block::default().borders(Borders::ALL).title(format!(
-        "{} · {}{loading} · p access, o Portal",
+        "{} · {}{loading} · ↑↓ field, y/c copy it, / search, o Portal, p access",
         truncate_with_ellipsis(&row.name, 60),
         row.kind_label()
     ));
@@ -780,12 +795,19 @@ fn draw_app(f: &mut Frame, area: Rect, app: &mut TuiApp) -> Result<()> {
         .divider("│");
     f.render_widget(tabs, parts[0]);
     let viewport = parts[1].height as usize;
-    let scroll = state
-        .detail_scroll
-        .min(lines.len().saturating_sub(viewport));
+    let mut scroll = state.detail_scroll;
+    // Bring a search match or the selected field into view.
+    if let Some(line) = state.detail_scroll_to {
+        if line < scroll || line >= scroll + viewport {
+            scroll = line.saturating_sub(viewport / 2);
+        }
+    }
+    let scroll = scroll.min(lines.len().saturating_sub(viewport));
     let content = Paragraph::new(lines).scroll((scroll.min(u16::MAX as usize) as u16, 0));
     f.render_widget(content, parts[1]);
-    app.state_mut().detail_scroll = scroll;
+    let state = app.state_mut();
+    state.detail_scroll = scroll;
+    state.detail_scroll_to = None;
     Ok(())
 }
 
@@ -1926,6 +1948,29 @@ fn draw_resource_list(f: &mut Frame, area: Rect, app: &mut TuiApp) -> Result<()>
     Ok(())
 }
 
+/// Search (`/`): highlight every match in a detail view's lines, the
+/// current one more strongly.
+fn highlight_search(lines: &mut [Line<'static>], state: &AppState) {
+    let pattern = state.detail_pattern();
+    if pattern.is_empty() {
+        return;
+    }
+    let texts: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    let matches = search::find_matches(&texts, pattern);
+    let current = state.detail_match;
+    for (i, line) in lines.iter_mut().enumerate() {
+        let ranges: Vec<(usize, usize)> = matches
+            .iter()
+            .filter(|m| m.line == i)
+            .map(|m| (m.start, m.end))
+            .collect();
+        if !ranges.is_empty() {
+            let cur = current.filter(|(l, _)| *l == i).map(|(_, c)| c);
+            *line = search::highlight(std::mem::take(line), &ranges, cur);
+        }
+    }
+}
+
 fn draw_resource_detail(f: &mut Frame, area: Rect, app: &mut TuiApp) -> Result<()> {
     let Some(resource) = app.state().selected_resource_detail.clone() else {
         let content = Paragraph::new("No resource selected.\n\nPress Esc to go back.")
@@ -1944,25 +1989,7 @@ fn draw_resource_detail(f: &mut Frame, area: Rect, app: &mut TuiApp) -> Result<(
     let tab = state.detail_tab;
 
     let mut lines = detail_lines(state);
-
-    // Search: highlight every match, the current one more strongly.
-    let pattern = state.detail_pattern();
-    if !pattern.is_empty() {
-        let texts: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
-        let matches = search::find_matches(&texts, pattern);
-        let current = state.detail_match;
-        for (i, line) in lines.iter_mut().enumerate() {
-            let ranges: Vec<(usize, usize)> = matches
-                .iter()
-                .filter(|m| m.line == i)
-                .map(|m| (m.start, m.end))
-                .collect();
-            if !ranges.is_empty() {
-                let cur = current.filter(|(l, _)| *l == i).map(|(_, c)| c);
-                *line = search::highlight(std::mem::take(line), &ranges, cur);
-            }
-        }
-    }
+    highlight_search(&mut lines, state);
     // The cursor of a tab with rows (Tags, Policy): Enter opens that row.
     if let Some(n) = state.detail_rows().filter(|n| *n > 0) {
         let line = detail_row_line(tab, state.detail_cursor.min(n - 1));
@@ -2510,11 +2537,12 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &TuiApp) {
             ],
             ViewMode::AppDetail => vec![
                 ("Tab/1-7", "Tabs"),
-                ("↑↓/jk", "Scroll"),
-                ("p", "Access"),
-                ("c", "Copy tab"),
-                ("y", "Copy app ID"),
+                ("↑↓/jk", "Field/Scroll"),
+                ("y/c", "Copy field"),
+                ("C", "Copy tab"),
+                ("/", "Search"),
                 ("o", "Portal"),
+                ("p", "Access"),
                 ("r", "Refresh"),
                 ("Esc", "Back"),
                 ("q", "Quit"),
@@ -2661,6 +2689,51 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &TuiApp) {
 }
 
 /// Draw error overlay
+/// `o` with several pages: which one to open.
+fn draw_portal_choice(f: &mut Frame, app: &TuiApp) {
+    let Some((pages, selected)) = &app.state().portal_choice else {
+        return;
+    };
+    let t = theme();
+    let height = pages.len() as u16 + 4;
+    let full = f.area();
+    let width = 64.min(full.width);
+    let area = Rect {
+        x: full.x + full.width.saturating_sub(width) / 2,
+        y: full.y + full.height.saturating_sub(height) / 2,
+        width,
+        height: height.min(full.height),
+    };
+    let mut lines: Vec<Line> = pages
+        .iter()
+        .enumerate()
+        .map(|(i, (name, _))| {
+            let line = Line::from(format!(" {}  {name}", i + 1));
+            if i == *selected {
+                line.style(t.selection())
+            } else {
+                line.style(Style::default().fg(t.text))
+            }
+        })
+        .collect();
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " ↑↓ choose · Enter or 1-9 open · Esc cancel",
+        Style::default().fg(t.muted),
+    )));
+    f.render_widget(ratatui::widgets::Clear, area);
+    let popup = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Open in the Azure Portal")
+            .style(match t.background {
+                Some(bg) => Style::default().bg(bg),
+                None => Style::default(),
+            }),
+    );
+    f.render_widget(popup, area);
+}
+
 fn draw_error_overlay(f: &mut Frame, app: &TuiApp) {
     if let Some(error) = &app.state().error {
         let area = centered_rect(60, 20, f.area());

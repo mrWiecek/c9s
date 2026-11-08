@@ -17,12 +17,13 @@ use ratatui::{backend::TestBackend, Terminal};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-/// Records what would have been opened.
+/// Records what would have been opened (and copied).
 #[derive(Clone, Default)]
 struct Opened(Arc<Mutex<Vec<String>>>);
 
 impl Desktop for Opened {
-    fn copy(&mut self, _text: &str) -> Result<(), String> {
+    fn copy(&mut self, text: &str) -> Result<(), String> {
+        self.0.lock().unwrap().push(format!("copy {text}"));
         Ok(())
     }
     fn open(&mut self, url: &str) -> Result<(), String> {
@@ -320,11 +321,113 @@ async fn managed_identities_say_which_kind_and_where_they_live() {
             "Portal (o)",
         ],
     );
+    // y still copies the app ID (the cursor starts on it); j/k select
+    // another field, c copies it.
+    press(&mut app, KeyCode::Char('y')).await;
+    assert_eq!(
+        opened.0.lock().unwrap().last().map(String::as_str),
+        Some("copy mi-u")
+    );
+    let fields = c9s_core::app_view::overview_fields(app.state());
+    let rg = fields
+        .iter()
+        .position(|f| f.label == "Resource group")
+        .unwrap();
+    while app.state().app_field < rg {
+        press(&mut app, KeyCode::Char('j')).await;
+    }
+    press(&mut app, KeyCode::Char('c')).await;
+    assert_eq!(
+        opened.0.lock().unwrap().last().map(String::as_str),
+        Some("copy rg-identities")
+    );
+    let id = fields
+        .iter()
+        .position(|f| f.label == "Resource ID")
+        .unwrap();
+    while app.state().app_field < id {
+        press(&mut app, KeyCode::Char('j')).await;
+    }
+    press(&mut app, KeyCode::Char('y')).await;
+    assert_eq!(
+        opened.0.lock().unwrap().last().map(String::as_str),
+        Some(format!("copy {UAMI}").as_str())
+    );
+
+    // o asks which page: the enterprise application or the Azure resource
+    // (no registration for a managed identity); the selected field's page
+    // (the Managed identity section) comes first.
     press(&mut app, KeyCode::Char('o')).await;
+    let (pages, selected) = app.state().portal_choice.clone().expect("a choice");
+    let names: Vec<&str> = pages.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "Enterprise application",
+            "Azure resource (the user-assigned identity)"
+        ]
+    );
+    assert_eq!(selected, 1);
+    assert_shows(
+        &mut app,
+        &["Open in the Azure Portal", "1  Enterprise application"],
+    );
+    press(&mut app, KeyCode::Enter).await;
+    assert!(app.state().portal_choice.is_none());
     assert_eq!(
         opened.0.lock().unwrap().last().map(String::as_str),
         Some(format!("https://portal.azure.com/#@tenant-1/resource{UAMI}").as_str())
     );
+    // 1 opens the enterprise application's Entra page instead.
+    press(&mut app, KeyCode::Char('o')).await;
+    press(&mut app, KeyCode::Char('1')).await;
+    let last = opened.0.lock().unwrap().last().cloned().unwrap();
+    assert!(
+        last.contains("ManagedAppMenuBlade") && last.contains("sp-u"),
+        "{last}"
+    );
+    // Esc closes the choice without opening anything.
+    let before = opened.0.lock().unwrap().len();
+    press(&mut app, KeyCode::Char('o')).await;
+    press(&mut app, KeyCode::Esc).await;
+    assert!(app.state().portal_choice.is_none());
+    assert_eq!(opened.0.lock().unwrap().len(), before);
+    assert_eq!(
+        app.state().view,
+        ViewMode::AppDetail,
+        "Esc only closed the choice"
+    );
+
+    // Search works on every tab, the JSON one too.
+    press(&mut app, KeyCode::Char('7')).await;
+    press(&mut app, KeyCode::Char('/')).await;
+    for c in "billing".chars() {
+        press(&mut app, KeyCode::Char(c)).await;
+    }
+    press(&mut app, KeyCode::Enter).await;
+    assert!(
+        app.state().detail_match.is_some(),
+        "a match on the JSON tab"
+    );
+    assert!(
+        app.state()
+            .notice
+            .as_deref()
+            .unwrap_or_default()
+            .contains("match 1 of"),
+        "{:?}",
+        app.state().notice
+    );
+    press(&mut app, KeyCode::Char('n')).await;
+    assert!(app
+        .state()
+        .notice
+        .as_deref()
+        .unwrap_or_default()
+        .contains("match"));
+    press(&mut app, KeyCode::Esc).await; // clears the search
+    assert!(app.state().detail_search.is_empty());
+    press(&mut app, KeyCode::Char('1')).await;
 
     // The system-assigned one: the resource it belongs to.
     press(&mut app, KeyCode::Esc).await;
@@ -341,10 +444,11 @@ async fn managed_identities_say_which_kind_and_where_they_live() {
         .unwrap();
     app.state_mut().list_state.selected = at;
     press(&mut app, KeyCode::Char('o')).await;
+    press(&mut app, KeyCode::Char('2')).await;
     assert_eq!(
         opened.0.lock().unwrap().last().map(String::as_str),
         Some(format!("https://portal.azure.com/#@tenant-1/resource{VM}").as_str()),
-        "o in the list opens the VM too"
+        "o in the list offers the VM too"
     );
     press(&mut app, KeyCode::Enter).await;
     settle(&mut app, &mut loads).await;

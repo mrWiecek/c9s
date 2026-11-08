@@ -419,6 +419,78 @@ fn managed_identity(out: &mut Vec<Line>, mi: &crate::apps::ManagedIdentity, stat
     rows(out, "Managed identity", &items);
 }
 
+/// Which page of an application a field belongs to, for `o`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    /// The app registration (or the app in general)
+    Registration,
+    EnterpriseApp,
+    /// The managed identity's Azure resource
+    Resource,
+    Other,
+}
+
+/// A label and value on the Overview: what `j`/`k` select and `y`/`c`
+/// copy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Field {
+    /// Its line in the Overview
+    pub line: usize,
+    pub label: String,
+    pub value: String,
+    pub section: Section,
+}
+
+/// The Overview's fields, in order: every "label  value" row, with the
+/// section it sits in.
+pub fn overview_fields(state: &AppState) -> Vec<Field> {
+    let Some(row) = state.app_open.as_ref() else {
+        return vec![];
+    };
+    let mut lines = Vec::new();
+    overview(&mut lines, row, state);
+    let mut section = Section::Other;
+    let mut fields = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        match line.as_slice() {
+            [(title, Tone::Heading)] => {
+                section = match title.as_str() {
+                    "Application" => Section::Registration,
+                    "Enterprise application" => Section::EnterpriseApp,
+                    "Managed identity" => Section::Resource,
+                    _ => Section::Other,
+                }
+            }
+            [(label, Tone::Label), (value, _), ..] if !value.trim().is_empty() => {
+                fields.push(Field {
+                    line: i,
+                    label: label.trim().to_string(),
+                    value: value.trim().to_string(),
+                    section,
+                })
+            }
+            [(indent, Tone::Text), rest @ ..] if indent == "  " && !rest.is_empty() => {
+                // A list item (redirect URIs): its text is the value.
+                let value: String = rest.iter().map(|(t, _)| t.as_str()).collect();
+                fields.push(Field {
+                    line: i,
+                    label: String::new(),
+                    value: value.trim().to_string(),
+                    section,
+                })
+            }
+            _ => {}
+        }
+    }
+    fields
+}
+
+/// The field the Overview cursor starts on: the app ID, which `y` has
+/// always copied.
+pub fn default_field(fields: &[Field]) -> usize {
+    fields.iter().position(|f| f.label == "App ID").unwrap_or(0)
+}
+
 /// The current tab as plain text, for `c`.
 pub fn app_text(state: &AppState) -> Vec<String> {
     app_lines(state)
