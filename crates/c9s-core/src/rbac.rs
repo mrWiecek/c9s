@@ -27,6 +27,12 @@ pub struct RoleAssignment {
     pub description: String,
     /// An ABAC condition, if any
     pub condition: String,
+    /// PIM: eligible (must be activated before use), not active
+    #[serde(default)]
+    pub eligible: bool,
+    /// PIM: when the eligibility ends (RFC 3339; empty: permanent)
+    #[serde(default)]
+    pub ends: String,
 }
 
 impl RoleAssignment {
@@ -51,7 +57,64 @@ impl RoleAssignment {
             created_on: text("createdOn"),
             description: text("description"),
             condition: text("condition"),
+            ..Default::default()
         })
+    }
+
+    /// From a PIM role eligibility instance (ARM). `None` for one that
+    /// ARM expands from elsewhere (`memberType` Group or Inherited: c9s
+    /// works out groups and inheritance itself) or that has ended at `now`
+    /// (Unix seconds).
+    pub fn from_eligibility(item: &Value, now: i64) -> Option<Self> {
+        let p = item.get("properties")?;
+        let text = |key: &str| {
+            p.get(key)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        let member = text("memberType");
+        if !member.is_empty() && !member.eq_ignore_ascii_case("Direct") {
+            return None;
+        }
+        let ends = text("endDateTime");
+        if let Ok(end) = chrono::DateTime::parse_from_rfc3339(&ends) {
+            if end.timestamp() <= now {
+                return None;
+            }
+        }
+        let id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if id.is_empty() {
+            return None;
+        }
+        let scope = text("scope");
+        Some(Self {
+            id,
+            scope: if scope.is_empty() { "/".into() } else { scope },
+            role_definition_id: text("roleDefinitionId"),
+            principal_id: text("principalId").to_ascii_lowercase(),
+            principal_type: text("principalType"),
+            created_on: text("createdOn"),
+            description: String::new(),
+            condition: text("condition"),
+            eligible: true,
+            ends,
+        })
+    }
+
+    /// "eligible", "eligible until 2027-03-01", or "" for an active one.
+    pub fn pim_label(&self) -> String {
+        if !self.eligible {
+            return String::new();
+        }
+        match self.ends.get(..10) {
+            Some(day) if !self.ends.is_empty() => format!("eligible until {day}"),
+            _ => "eligible".into(),
+        }
     }
 
     /// The role's GUID (lowercase), which identifies it whatever scope its
@@ -196,6 +259,45 @@ pub fn assignments_at<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pim_eligibility_instances_become_eligible_assignments() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-08T00:00:00Z")
+            .unwrap()
+            .timestamp();
+        let item = |member: &str, end: &str| {
+            json!({
+                "id": "/providers/Microsoft.Authorization/roleEligibilityScheduleInstances/e1",
+                "properties": {
+                    "scope": "/subscriptions/s1",
+                    "roleDefinitionId": "/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/8E3AF657",
+                    "principalId": "ADA", "principalType": "User",
+                    "memberType": member, "endDateTime": end, "status": "Provisioned"
+                }
+            })
+        };
+        let a =
+            RoleAssignment::from_eligibility(&item("Direct", "2027-03-01T10:00:00Z"), now).unwrap();
+        assert!(a.eligible);
+        assert_eq!(a.principal_id, "ada");
+        assert_eq!(a.role_guid(), "8e3af657");
+        assert_eq!(a.pim_label(), "eligible until 2027-03-01");
+        let permanent = RoleAssignment::from_eligibility(&item("Direct", ""), now).unwrap();
+        assert_eq!(permanent.pim_label(), "eligible");
+        // c9s expands groups and inheritance itself; ended ones are gone.
+        for (member, end) in [
+            ("Group", ""),
+            ("Inherited", ""),
+            ("Direct", "2026-01-01T00:00:00Z"),
+        ] {
+            assert!(
+                RoleAssignment::from_eligibility(&item(member, end), now).is_none(),
+                "{member} {end}"
+            );
+        }
+        let active = RoleAssignment::default();
+        assert_eq!(active.pim_label(), "");
+    }
     use crate::scope_tree::{GroupNode, SubscriptionNode};
     use serde_json::json;
 

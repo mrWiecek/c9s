@@ -1306,6 +1306,12 @@ impl AppState {
                     &r.assignment.principal_type,
                     &r.scope_label,
                     &r.origin_label,
+                    // "eligible" finds PIM eligibility, "active" the rest.
+                    if r.assignment.eligible {
+                        "eligible pim"
+                    } else {
+                        "active"
+                    },
                 ]
                 .iter()
                 .any(|f| contains_ignore_ascii_case(f, &needle))
