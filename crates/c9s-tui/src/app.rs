@@ -322,8 +322,26 @@ impl TuiApp {
                 Ok(true)
             }
             KeyCode::Enter => {
+                // A suggestion is on offer for the word being typed: Enter
+                // takes it (as Tab would) and runs the command, unless it
+                // still needs a value (`type=`).
+                let state = self.state();
+                if let Some((input, needs_more)) = complete::enter(
+                    &state.command_input,
+                    state.command_selection,
+                    state.command_picked,
+                    state,
+                ) {
+                    let state = self.state_mut();
+                    state.command_input = input;
+                    state.command_selection = 0;
+                    state.command_picked = false;
+                    if needs_more {
+                        return Ok(true);
+                    }
+                }
                 debug!("Execute command");
-                let command_input = self.state().command_input.clone();
+                let command_input = self.state().command_input.trim_end().to_string();
                 self.state_mut().exit_command_mode();
                 self.execute_command(&command_input).await?;
                 Ok(true)
@@ -345,6 +363,7 @@ impl TuiApp {
                     let state = self.state_mut();
                     state.command_input = input;
                     state.command_selection = 0;
+                    state.command_picked = false;
                 }
                 Ok(true)
             }
@@ -355,6 +374,7 @@ impl TuiApp {
                     let step = if key.code == KeyCode::Down { 1 } else { n - 1 };
                     let state = self.state_mut();
                     state.command_selection = (state.command_selection + step) % n;
+                    state.command_picked = true;
                 }
                 Ok(true)
             }

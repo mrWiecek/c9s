@@ -249,3 +249,65 @@ async fn ctx_lists_aws_profiles_and_switches_cloud() {
     command(&mut app, "ctx prod-admin").await;
     assert_eq!(app.state().provider, c9s_core::provider::Provider::Aws);
 }
+
+#[tokio::test]
+async fn enter_takes_the_highlighted_suggestion_and_runs() {
+    let (mut app, azure) = setup();
+    let mut loads = app.take_load_receiver().unwrap();
+    command(&mut app, "ctx").await;
+    app.apply_load(loads.recv().await.unwrap());
+
+    // Part of a name, then Enter: no Tab needed.
+    command(&mut app, "ctx fab").await;
+    assert_eq!(
+        app.state().tenant.as_deref(),
+        Some("t-2"),
+        "switched to Fabrikam"
+    );
+    assert!(app.state().error.is_none(), "{:?}", app.state().error);
+
+    // ↑/↓ choose another suggestion; Enter takes that one.
+    press(&mut app, KeyCode::Char(':')).await;
+    for c in "ctx ".chars() {
+        press(&mut app, KeyCode::Char(c)).await;
+    }
+    let first = c9s_core::complete::complete(&app.state().command_input, app.state()).items;
+    assert!(first.len() > 1, "{first:?}");
+    press(&mut app, KeyCode::Down).await;
+    press(&mut app, KeyCode::Enter).await;
+    assert!(!app.state().command_mode, "it ran");
+    let _ = azure;
+
+    // Nothing typed after the command and nothing picked: run as typed
+    // (where you are), not the first suggestion.
+    press(&mut app, KeyCode::Char(':')).await;
+    for c in "res ".chars() {
+        press(&mut app, KeyCode::Char(c)).await;
+    }
+    assert!(c9s_core::complete::enter(
+        &app.state().command_input,
+        app.state().command_selection,
+        app.state().command_picked,
+        app.state()
+    )
+    .is_none());
+    press(&mut app, KeyCode::Esc).await;
+
+    // A key suggestion still needs its value: Enter fills it in and waits.
+    press(&mut app, KeyCode::Char(':')).await;
+    for c in "res ty".chars() {
+        press(&mut app, KeyCode::Char(c)).await;
+    }
+    press(&mut app, KeyCode::Enter).await;
+    assert!(app.state().command_mode, "still typing");
+    assert_eq!(app.state().command_input, "res type=");
+    press(&mut app, KeyCode::Esc).await;
+
+    // A word that already is a suggestion is kept as typed.
+    press(&mut app, KeyCode::Char(':')).await;
+    for c in "ctx all".chars() {
+        press(&mut app, KeyCode::Char(c)).await;
+    }
+    press(&mut app, KeyCode::Enter).await;
+    assert_eq!(app.state().tenant, None, ":ctx all ran as typed");
+}
