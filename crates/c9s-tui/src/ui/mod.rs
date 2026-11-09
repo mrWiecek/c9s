@@ -64,6 +64,11 @@ pub fn draw(f: &mut Frame, app: &mut TuiApp) -> Result<()> {
         draw_portal_choice(f, app);
     }
 
+    // `s` asking which column to sort by
+    if app.state().sort_picker.is_some() {
+        draw_sort_picker(f, app);
+    }
+
     // Draw error overlay if present
     if app.state().error.is_some() {
         draw_error_overlay(f, app);
@@ -2711,6 +2716,72 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &TuiApp) {
 }
 
 /// Draw error overlay
+/// `s`: the view's columns to sort by, the current one marked.
+fn draw_sort_picker(f: &mut Frame, app: &TuiApp) {
+    let state = app.state();
+    let Some(selected) = state.sort_picker else {
+        return;
+    };
+    let t = theme();
+    let columns = c9s_core::sort::columns(&state.view);
+    let current = state.sort_spec(&state.view);
+    let mut entries: Vec<String> = columns
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let mark = match current {
+                Some(s) if s.column == i => {
+                    if s.descending {
+                        "  ↓ (again: ↑)"
+                    } else {
+                        "  ↑ (again: ↓)"
+                    }
+                }
+                _ => "",
+            };
+            format!(" {}  {name}{mark}", i + 1)
+        })
+        .collect();
+    entries.push(" 0  Default order".into());
+    let height = entries.len() as u16 + 4;
+    let full = f.area();
+    let width = 44.min(full.width);
+    let area = Rect {
+        x: full.x + full.width.saturating_sub(width) / 2,
+        y: full.y + full.height.saturating_sub(height) / 2,
+        width,
+        height: height.min(full.height),
+    };
+    let mut lines: Vec<Line> = entries
+        .into_iter()
+        .enumerate()
+        .map(|(i, text)| {
+            let line = Line::from(text);
+            if i == selected {
+                line.style(t.selection())
+            } else {
+                line.style(Style::default().fg(t.text))
+            }
+        })
+        .collect();
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " ↑↓ choose · Enter or 1-9 sort · Esc cancel",
+        Style::default().fg(t.muted),
+    )));
+    f.render_widget(ratatui::widgets::Clear, area);
+    let popup = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Sort by")
+            .style(match t.background {
+                Some(bg) => Style::default().bg(bg),
+                None => Style::default(),
+            }),
+    );
+    f.render_widget(popup, area);
+}
+
 /// `o` with several pages: which one to open.
 fn draw_portal_choice(f: &mut Frame, app: &TuiApp) {
     let Some((pages, selected)) = &app.state().portal_choice else {

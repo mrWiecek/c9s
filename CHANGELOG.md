@@ -12,6 +12,20 @@ Release process, audit and rollback: [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-11-09
+
+### Added
+- **Sort any list by a column (`s`).** `s` opens *Sort by* with the view's
+  columns: pick one (↑/↓ and Enter, or its number) to sort by it; the same
+  column again sorts the other way; `0` goes back to the view's own order.
+  Text sorts ignoring case, numbers and dates as numbers (soonest expiry
+  first). Each view keeps its own order, the status bar shows it ("sorted
+  by Type ↓"), and the highlighted item stays highlighted. Works in
+  subscriptions, resource groups, resources, `:type`, `:tag`, `:ctx`,
+  `:policy` (and non-compliant resources), `:compliance`, `:exemption`,
+  `:ra` (PIM eligible first, too), `:role`, `:group` (and members), `:app`.
+  Large lists are sorted once per change, not on every frame.
+
 ## [1.9.1] - 2026-11-09
 
 ### Security
@@ -906,7 +920,8 @@ Already in the codebase before this changelog was started:
 - Resource groups and resources are not yet shown from the cache before Azure
   answers (M1 step 4).
 
-[Unreleased]: https://github.com/mrWiecek/c9s/compare/v1.9.1...HEAD
+[Unreleased]: https://github.com/mrWiecek/c9s/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/mrWiecek/c9s/compare/v1.9.1...v1.10.0
 [1.9.1]: https://github.com/mrWiecek/c9s/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/mrWiecek/c9s/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/mrWiecek/c9s/compare/v1.7.0...v1.8.0

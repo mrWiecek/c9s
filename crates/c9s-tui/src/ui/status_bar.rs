@@ -83,6 +83,15 @@ impl StatusBar {
             spans.push(Span::raw("| "));
         }
 
+        // Sort indicator (s)
+        if let Some(spec) = state.sort_spec(&state.view) {
+            spans.push(Span::styled(
+                format!("sorted by {} ", spec.label(&state.view)),
+                Style::default().fg(theme().special),
+            ));
+            spans.push(Span::raw("| "));
+        }
+
         // Filter indicator
         if !state.filter.is_empty() {
             spans.push(Span::styled(
