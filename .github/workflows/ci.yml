@@ -119,3 +119,53 @@ jobs:
         with:
           tool: cargo-audit
       - run: cargo audit
+
+  install-linux:
+    # The static build, its .deb and the install script, as users run them.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools rpm
+      - name: Shell scripts
+        run: shellcheck scripts/*.sh
+      - name: Static build, .deb and .rpm
+        run: |
+          cargo build --release --locked --target x86_64-unknown-linux-musl -p c9s
+          version=$(sed -n 's/^version = "\([0-9.]*\)"$/\1/p' Cargo.toml | head -1)
+          scripts/package-linux.sh "$version" target/x86_64-unknown-linux-musl/release/c9s out
+          sudo dpkg -i "out/c9s_${version}_amd64.deb"
+          c9s -V
+          rpm -qpl out/c9s-*.rpm
+          sudo dpkg -r c9s
+      - name: install.sh (the latest release)
+        run: |
+          C9S_INSTALL_DIR="$RUNNER_TEMP/bin" sh scripts/install.sh
+          "$RUNNER_TEMP/bin/c9s" -V
+
+  install-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: install.ps1 (the latest release)
+        shell: pwsh
+        run: |
+          $env:C9S_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'c9s'
+          ./scripts/install.ps1
+          & (Join-Path $env:C9S_INSTALL_DIR 'c9s.exe') -V
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: install.ps1 under Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $env:C9S_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'c9s51'
+          ./scripts/install.ps1
+          & (Join-Path $env:C9S_INSTALL_DIR 'c9s.exe') -V
+          if ($LASTEXITCODE -ne 0) { exit 1 }

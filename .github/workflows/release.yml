@@ -79,6 +79,9 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          # Static (musl): runs on any Linux and WSL whatever its glibc;
+          # also packaged as .deb and .rpm.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, packages: true }
           - { os: macos-latest, target: aarch64-apple-darwin }
           - { os: macos-latest, target: x86_64-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
@@ -91,6 +94,9 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
+      - name: Linux packaging tools
+        if: matrix.packages
+        run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools rpm
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }} -p c9s
       - name: Package
@@ -108,18 +114,24 @@ jobs:
             archive="$name.tar.gz"
             tar czf "$archive" "$name"
           fi
-          # Upload exactly the archive: a glob like c9s-v*.* also matches the
-          # staging directory (its name contains the version's dots).
-          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+          # Upload exactly what is released (out/): a glob like c9s-v*.*
+          # also matches the staging directory.
+          mkdir out
+          mv "$archive" out/
+      - name: .deb and .rpm
+        if: matrix.packages
+        run: |
+          scripts/package-linux.sh "${{ needs.plan.outputs.version }}" \
+            "target/${{ matrix.target }}/release/c9s" out
       # Signed build provenance: `gh attestation verify <archive> --repo
       # mrWiecek/c9s` proves the archive was built here, from this commit.
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
-          subject-path: ${{ env.ARCHIVE }}
+          subject-path: out/*
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: build-${{ matrix.target }}
-          path: ${{ env.ARCHIVE }}
+          path: out/*
           if-no-files-found: error
 
   publish:
@@ -128,6 +140,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist
@@ -136,9 +151,17 @@ jobs:
         working-directory: dist
         run: |
           ls -la
-          sha256sum c9s-v*.tar.gz c9s-v*.zip > SHA256SUMS
+          sha256sum c9s-v*.tar.gz c9s-v*.zip c9s_*.deb c9s-*.rpm > SHA256SUMS
           cat SHA256SUMS
-          test "$(wc -l < SHA256SUMS)" -eq 4
+          # 5 archives, a .deb and an .rpm
+          test "$(wc -l < SHA256SUMS)" -eq 7
+      - name: Install scripts and package-manager manifests
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          cp scripts/install.sh scripts/install.ps1 dist/
+          scripts/manifests.sh "$VERSION" dist dist
+          (cd dist && zip -qr winget-manifests.zip winget)
       - name: Tag and publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -149,4 +172,6 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "v$VERSION" \
             --notes-file dist/notes.md \
-            dist/c9s-v*.tar.gz dist/c9s-v*.zip dist/SHA256SUMS
+            dist/c9s-v*.tar.gz dist/c9s-v*.zip dist/c9s_*.deb dist/c9s-*.rpm \
+            dist/SHA256SUMS dist/install.sh dist/install.ps1 dist/c9s.json \
+            dist/winget-manifests.zip
