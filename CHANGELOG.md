@@ -14,6 +14,12 @@ Release process, audit and rollback: [RELEASING.md](RELEASING.md).
 
 ## [1.9.1] - 2026-11-09
 
+### Security
+- **SQLite updated** (bundled through `rusqlite` 0.41, `libsqlite3-sys`
+  0.39): fixes CVE-2026-119375 in SQLite (RUSTSEC-2026-0459, medium), which
+  `cargo audit` flagged. The minimum Rust version for building from source
+  is now 1.89 (`rusqlite` 0.41 needs it).
+
 ### Added
 - **Easier installs, for Windows and Linux/WSL above all.** Every release
   now also has:

@@ -82,8 +82,9 @@ Both install `/usr/bin/c9s`, the static binary; nothing else is needed.
 
 ## From source
 
-With [Rust](https://rustup.rs) 1.88 or newer (no other tools: TLS is
-rustls, SQLite is built in):
+With [Rust](https://rustup.rs) 1.89 or newer and a C compiler
+(`build-essential` on Debian/Ubuntu, Visual Studio Build Tools on Windows;
+SQLite is compiled in, TLS is rustls, so nothing else):
 
 ```bash
 cargo install --git https://github.com/mrWiecek/c9s --locked c9s

@@ -27,7 +27,7 @@ works for Kubernetes.
 
 ## Requirements
 
-- [Rust](https://rustup.rs) 1.88 or newer and a C compiler (`build-essential` on
+- [Rust](https://rustup.rs) 1.89 or newer and a C compiler (`build-essential` on
   Debian/Ubuntu/WSL; Xcode command line tools on macOS). OpenSSL and `pkg-config`
   are **not** needed: TLS uses rustls.
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), logged in with
