@@ -11,9 +11,9 @@ members = [
 ]
 
 [workspace.package]
-version = "1.9.0"
+version = "1.10.0"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.89"
 authors = ["c9s contributors"]
 license = "Apache-2.0"
 repository = "https://github.com/mrWiecek/c9s"
@@ -32,7 +32,7 @@ crossterm = "0.29"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 serde_json = "1.0"
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 
 # Error handling
 anyhow = "1.0"

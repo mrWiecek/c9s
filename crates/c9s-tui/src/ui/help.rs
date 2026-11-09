@@ -106,6 +106,7 @@ pub fn help_lines() -> Vec<Line<'static>> {
         l("  j/k ↑/↓   move          g/G   first/last        Ctrl+d/u, PgDn/PgUp   page"),
         l("  Enter     open          Esc   back / clear filter / close popup"),
         l("  r         refresh       ?     this help         q, Ctrl+c   quit"),
+        l("  s         sort the list by a column (again: the other way; 0: default order)"),
         l("  y         copy the selected item's ID (Azure ID, GCP resource name, AWS ARN)"),
         l("  c         copy the current view (see below)"),
         l("  o         open the selected item in the Azure Portal (GCP, AWS: their console)"),

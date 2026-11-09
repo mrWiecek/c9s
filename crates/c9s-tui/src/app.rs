@@ -170,6 +170,12 @@ impl TuiApp {
             return self.handle_palette_key(key).await;
         }
 
+        // `s`: choosing the column to sort by
+        if self.state().sort_picker.is_some() {
+            self.handle_sort_key(key);
+            return Ok(true);
+        }
+
         // `o` asked which page to open
         if self.state().portal_choice.is_some() {
             self.handle_portal_choice_key(key);
@@ -1672,6 +1678,66 @@ impl TuiApp {
         pages
     }
 
+    /// Keys while `s` asks which column to sort by: ↑/↓ or j/k choose,
+    /// Enter or 1-9 sort (the same column again: the other way), 0 the
+    /// view's own order, Esc cancels.
+    fn handle_sort_key(&mut self, key: KeyEvent) {
+        let view = self.state().view.clone();
+        let columns = c9s_core::sort::columns(&view);
+        let Some(selected) = self.state().sort_picker else {
+            return;
+        };
+        // The last entry is "Default order".
+        let entries = columns.len() + 1;
+        let chosen = match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.state_mut().sort_picker = None;
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                self.state_mut().sort_picker = Some((selected + 1) % entries);
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
+                self.state_mut().sort_picker = Some((selected + entries - 1) % entries);
+                return;
+            }
+            KeyCode::Enter | KeyCode::Char('s') => selected,
+            KeyCode::Char('0') => columns.len(),
+            KeyCode::Char(c @ '1'..='9') => {
+                let i = c as usize - '1' as usize;
+                if i >= columns.len() {
+                    return;
+                }
+                i
+            }
+            _ => return,
+        };
+        // Keep the highlighted item highlighted after the rows move.
+        let keep = self.state().selected_id();
+        let state = self.state_mut();
+        state.sort_picker = None;
+        if chosen >= columns.len() {
+            state.sorts.remove(&view);
+            state.notice = Some("Default order".into());
+        } else {
+            let descending = matches!(
+                state.sort_spec(&view),
+                Some(s) if s.column == chosen && !s.descending
+            );
+            let spec = c9s_core::sort::SortSpec {
+                column: chosen,
+                descending,
+            };
+            state.notice = Some(format!("Sorted by {}", spec.label(&view)));
+            state.sorts.insert(view, spec);
+        }
+        state.list_state.reset();
+        if let Some(id) = keep {
+            state.select_id(&id);
+        }
+    }
+
     /// Keys while `o` asks which page to open: ↑/↓ or j/k choose, 1-9 or
     /// Enter open, Esc cancels.
     fn handle_portal_choice_key(&mut self, key: KeyEvent) {
@@ -2343,6 +2409,13 @@ impl TuiApp {
             }
             KeyCode::Char('C') => {
                 self.copy_view();
+                return Ok(true);
+            }
+            KeyCode::Char('s') if !c9s_core::sort::columns(&self.state().view).is_empty() => {
+                // Start on the column the view is sorted by, else the first.
+                let state = self.state_mut();
+                let at = state.sort_spec(&state.view).map_or(0, |s| s.column);
+                state.sort_picker = Some(at);
                 return Ok(true);
             }
             _ => {}

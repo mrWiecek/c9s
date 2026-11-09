@@ -74,7 +74,7 @@ Goal: a repository a stranger can clone, understand and contribute to in 10 minu
 **Done when:** `just ci` passes locally and in GitHub Actions, the README is accurate,
 and no file or crate says "aztui".
 
-CI is green on Linux, macOS and Windows. The minimum Rust version is 1.88
+CI is green on Linux, macOS and Windows. The minimum Rust version is 1.89
 (`time 0.3.47` requires it), and a CI job builds with exactly that version.
 
 ## M1 — Speed (2–3 weeks)

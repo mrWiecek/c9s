@@ -27,7 +27,7 @@ works for Kubernetes.
 
 ## Requirements
 
-- [Rust](https://rustup.rs) 1.88 or newer and a C compiler (`build-essential` on
+- [Rust](https://rustup.rs) 1.89 or newer and a C compiler (`build-essential` on
   Debian/Ubuntu/WSL; Xcode command line tools on macOS). OpenSSL and `pkg-config`
   are **not** needed: TLS uses rustls.
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), logged in with
@@ -39,13 +39,32 @@ works for Kubernetes.
 
 ## Install
 
-Download a prebuilt binary for Linux, macOS or Windows from
-[Releases](https://github.com/mrWiecek/c9s/releases), or build from source:
+**Windows** (PowerShell, no admin; installs for your user and adds it to PATH):
+
+```powershell
+irm https://github.com/mrWiecek/c9s/releases/latest/download/install.ps1 | iex
+```
+
+**Linux and WSL** (no sudo; a static binary in `~/.local/bin` that runs on any
+distribution):
 
 ```bash
-cargo install --git https://github.com/mrWiecek/c9s --locked c9s              # latest
-cargo install --git https://github.com/mrWiecek/c9s --tag v0.3.0 --locked c9s # a specific version
+curl -fsSL https://github.com/mrWiecek/c9s/releases/latest/download/install.sh | sh
 ```
+
+Both verify the download against the release's `SHA256SUMS` before
+installing. Or use a package:
+
+| | |
+|---|---|
+| Scoop | `scoop install https://github.com/mrWiecek/c9s/releases/latest/download/c9s.json` |
+| Debian, Ubuntu | download `c9s_<version>_amd64.deb` from [Releases](https://github.com/mrWiecek/c9s/releases), then `sudo apt install ./c9s_*_amd64.deb` |
+| RHEL, Fedora, SUSE | download `c9s-<version>-1.x86_64.rpm`, then `sudo dnf install ./c9s-*.rpm` |
+| macOS | download the `aarch64-apple-darwin` (Apple silicon) or `x86_64-apple-darwin` archive |
+| From source | `cargo install --git https://github.com/mrWiecek/c9s --locked c9s` |
+
+Every method, how to verify a download, and what to do when a company
+policy blocks it: [docs/INSTALL.md](docs/INSTALL.md).
 
 `c9s --version` shows the installed version and commit. Versions follow
 SemVer; see [CHANGELOG.md](CHANGELOG.md) for what changed and

@@ -20,6 +20,7 @@ pub mod rbac;
 pub mod resource_type;
 pub mod safe_text;
 pub mod scope_tree;
+pub mod sort;
 pub mod state;
 /// Timing stats (defined in c9s-azure so its HTTP clients can record too).
 pub use c9s_azure::timing;

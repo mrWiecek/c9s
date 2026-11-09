@@ -121,6 +121,13 @@ pub struct AppState {
     pub app_detail: Option<(String, crate::apps::AppDetail)>,
     pub app_tab: AppTab,
 
+    /// How each list view is sorted (`s`); a view without an entry keeps
+    /// its own order
+    pub sorts: HashMap<ViewMode, crate::sort::SortSpec>,
+
+    /// `s` open: the highlighted column in the "Sort by" list
+    pub sort_picker: Option<usize>,
+
     /// The selected field on an application's Overview (`j`/`k`; `y`/`c`
     /// copy it, `o` offers its page first)
     pub app_field: usize,
@@ -751,6 +758,14 @@ impl AppState {
                         || contains_ignore_ascii_case(&s.name, needle)
                         || contains_ignore_ascii_case(&s.id, needle))
             },
+            self.sort_spec(&ViewMode::SubscriptionList).map(|spec| {
+                let key: &dyn Fn(&Subscription, usize) -> crate::sort::SortValue = &|s, c| match c {
+                    0 => crate::sort::SortValue::text(&s.name),
+                    1 => crate::sort::SortValue::text(&s.id),
+                    _ => crate::sort::SortValue::text(&s.state),
+                };
+                (spec, key)
+            }),
         )
     }
 
@@ -776,7 +791,7 @@ impl AppState {
 
     /// Rows of the tenant view: "all tenants" first, then every tenant known
     /// from Azure or from a subscription, with its subscription count.
-    pub fn tenant_rows(&self) -> Vec<TenantRow> {
+    fn tenant_rows_unsorted(&self) -> Vec<TenantRow> {
         let mut rows: Vec<TenantRow> = self
             .tenants
             .iter()
@@ -896,7 +911,7 @@ impl AppState {
     /// Rows of the policy view: the assignments that apply at the policy
     /// scope (assigned there or inherited), with compliance counts when
     /// loaded, most non-compliant first. `/` narrows by name or origin.
-    pub fn policy_rows(&self) -> Vec<PolicyRow> {
+    fn policy_rows_unsorted(&self) -> Vec<PolicyRow> {
         use crate::policy::{applicable, Origin};
         let Some(scope) = &self.policy_scope else {
             return vec![];
@@ -999,7 +1014,7 @@ impl AppState {
     /// tenant), most non-compliant resources first, then lowest compliance;
     /// those without evaluated resources last. `/` narrows by name, ID or
     /// management group.
-    pub fn compliance_rows(&self) -> Vec<ComplianceRow> {
+    fn compliance_rows_unsorted(&self) -> Vec<ComplianceRow> {
         let Some(rollup) = &self.compliance_rollup else {
             return vec![];
         };
@@ -1072,7 +1087,7 @@ impl AppState {
     }
 
     /// Rows of `:app` (see [`crate::apps::app_rows`]).
-    pub fn app_rows(&self) -> Vec<crate::apps::AppRow> {
+    fn app_rows_unsorted(&self) -> Vec<crate::apps::AppRow> {
         crate::apps::app_rows(
             &self.applications,
             &self.service_principals,
@@ -1101,7 +1116,7 @@ impl AppState {
 
     /// Rows of `:group`, by name; `/` narrows by name, description, mail or
     /// kind ("security", "Microsoft 365", "dynamic", "role-assignable").
-    pub fn group_rows(&self) -> Vec<&c9s_azure::directory::Group> {
+    fn group_rows_unsorted(&self) -> Vec<&c9s_azure::directory::Group> {
         let mut rows: Vec<&c9s_azure::directory::Group> = self.groups.iter().collect();
         rows.sort_by_cached_key(|g| g.display_name.to_lowercase());
         if self.filter.is_empty() {
@@ -1145,7 +1160,7 @@ impl AppState {
     /// Members of the shown group (`None` while loading): groups first, then
     /// users, service principals and devices, by name. `/` narrows by name,
     /// sign-in name, app ID or kind.
-    pub fn member_rows(&self) -> Option<Vec<c9s_azure::directory::Principal>> {
+    fn member_rows_unsorted(&self) -> Option<Vec<c9s_azure::directory::Principal>> {
         let id = self.members_group.as_ref()?;
         let members = self
             .group_members
@@ -1164,7 +1179,7 @@ impl AppState {
     }
 
     /// Groups the shown principal belongs to (`None` while loading).
-    pub fn member_of_rows(&self) -> Option<Vec<c9s_azure::directory::Principal>> {
+    fn member_of_rows_unsorted(&self) -> Option<Vec<c9s_azure::directory::Principal>> {
         let id = self.member_of.as_ref()?;
         let groups = self.principal_groups.get(id)?;
         Some(principal_rows(groups.iter(), &self.filter))
@@ -1204,7 +1219,7 @@ impl AppState {
     /// Rows of `:ra`: assignments inherited from above (top first), then
     /// those at the scope, then those below; by role and principal within
     /// each. `/` narrows by role, built-in/custom, principal, type or scope.
-    pub fn role_assignment_rows(&self) -> Vec<RoleAssignmentRow> {
+    fn role_assignment_rows_unsorted(&self) -> Vec<RoleAssignmentRow> {
         use crate::rbac::{assignments_at, Reach};
         // One principal's access: whose assignments count, and through which
         // group (lowercase ID → group name; the principal itself: None).
@@ -1332,7 +1347,7 @@ impl AppState {
     /// Rows of `:role`: custom roles first, then built-in, by name, with how
     /// many assignments each has in the tenant. `/` narrows by name,
     /// built-in/custom or description.
-    pub fn role_definition_rows(&self) -> Vec<RoleDefinitionRow> {
+    fn role_definition_rows_unsorted(&self) -> Vec<RoleDefinitionRow> {
         let mut counts: HashMap<String, usize> = HashMap::new();
         for a in &self.role_assignments {
             *counts.entry(a.role_guid()).or_default() += 1;
@@ -1386,7 +1401,7 @@ impl AppState {
     /// Rows of `:exemption`: the exemptions at or below the scope, expired
     /// first, then soonest to expire, then those that never expire. `/`
     /// narrows by name, category, assignment, scope or reason.
-    pub fn exemption_rows(&self) -> Vec<ExemptionRow> {
+    fn exemption_rows_unsorted(&self) -> Vec<ExemptionRow> {
         let now = chrono::Utc::now().timestamp();
         let mut rows: Vec<ExemptionRow> = self
             .policy_exemptions
@@ -1467,7 +1482,7 @@ impl AppState {
 
     /// Rows of the non-compliant view: one per resource, `/` narrows by
     /// name, type, resource group or failing policy.
-    pub fn non_compliant_rows(&self) -> Vec<crate::policy::NonCompliantResource> {
+    fn non_compliant_rows_unsorted(&self) -> Vec<crate::policy::NonCompliantResource> {
         let rows = crate::policy::group_by_resource(&self.policy_states);
         if self.filter.is_empty() {
             return rows;
@@ -1625,6 +1640,15 @@ impl AppState {
                         || contains_ignore_ascii_case(&rg.name, needle)
                         || contains_ignore_ascii_case(&rg.location, needle))
             },
+            self.sort_spec(&ViewMode::ResourceGroupList).map(|spec| {
+                let key: &dyn Fn(&ResourceGroup, usize) -> crate::sort::SortValue = &|rg, c| match c
+                {
+                    0 => crate::sort::SortValue::text(&rg.name),
+                    1 => crate::sort::SortValue::text(&rg.location),
+                    _ => crate::sort::SortValue::text(&rg.subscription_id),
+                };
+                (spec, key)
+            }),
         )
     }
 
@@ -1644,13 +1668,23 @@ impl AppState {
                         || crate::resource_type::type_contains(&r.resource_type, needle)
                         || contains_ignore_ascii_case(&r.location, needle))
             },
+            self.sort_spec(&ViewMode::ResourceList).map(|spec| {
+                let key: &dyn Fn(&Resource, usize) -> crate::sort::SortValue = &|r, c| match c {
+                    0 => crate::sort::SortValue::text(&r.name),
+                    1 => crate::sort::SortValue::text(&r.resource_type),
+                    2 => crate::sort::SortValue::text(&r.resource_group),
+                    3 => crate::sort::SortValue::text(&r.location),
+                    _ => crate::sort::SortValue::text(&r.subscription_id),
+                };
+                (spec, key)
+            }),
         )
     }
 
     /// Resource counts per type (types lowercase, most common first) over the
     /// resources matching the structured query, narrowed by the `/` filter
     /// on the type name.
-    pub fn type_summary(&self) -> Vec<(String, usize)> {
+    fn type_summary_unsorted(&self) -> Vec<(String, usize)> {
         let key = (
             self.resources.as_ptr() as usize,
             self.resources.len(),
@@ -1690,7 +1724,7 @@ impl AppState {
     /// key and value, most common first. Keys are grouped ignoring case (as
     /// Azure treats them) and shown as first seen; values are kept as they
     /// are. The `/` filter narrows rows by key or value.
-    pub fn tag_summary(&self) -> Vec<TagCount> {
+    fn tag_summary_unsorted(&self) -> Vec<TagCount> {
         let key = (
             self.resources.as_ptr() as usize,
             self.resources.len(),
@@ -1760,22 +1794,262 @@ impl AppState {
             .map(|(t, _)| t)
     }
 
+    /// [`Self::tenant_rows_unsorted`], in the order `s` chose for the view.
+    pub fn tenant_rows(&self) -> Vec<TenantRow> {
+        use crate::sort::SortValue as SV;
+        let mut rows = self.tenant_rows_unsorted();
+        crate::sort::sort(
+            &mut rows,
+            self.sort_spec(&ViewMode::TenantList),
+            |r, c| match c {
+                0 => SV::text(&r.name),
+                1 => SV::text(r.provider.as_str()),
+                _ => SV::Num(r.subscriptions as i64),
+            },
+        );
+        rows
+    }
+
+    /// [`Self::policy_rows_unsorted`], in the order `s` chose for the view.
+    pub fn policy_rows(&self) -> Vec<PolicyRow> {
+        use crate::sort::SortValue as SV;
+        let mut rows = self.policy_rows_unsorted();
+        crate::sort::sort(
+            &mut rows,
+            self.sort_spec(&ViewMode::PolicyAssignments),
+            |r, c| match c {
+                0 => SV::text(if r.assignment.display_name.is_empty() {
+                    &r.assignment.name
+                } else {
+                    &r.assignment.display_name
+                }),
+                1 => SV::Num(r.compliance.as_ref().map_or(-1, |c| c.non_compliant as i64)),
+                2 => SV::text(&r.origin_label),
+                _ => SV::text(&r.assignment.enforcement),
+            },
+        );
+        rows
+    }
+
+    /// [`Self::compliance_rows_unsorted`], in the order `s` chose for the view.
+    pub fn compliance_rows(&self) -> Vec<ComplianceRow> {
+        use crate::sort::SortValue as SV;
+        let mut rows = self.compliance_rows_unsorted();
+        crate::sort::sort(
+            &mut rows,
+            self.sort_spec(&ViewMode::ComplianceRanking),
+            |r, c| match c {
+                0 => SV::text(&r.name),
+                1 => SV::Num(r.compliance.non_compliant as i64),
+                2 => SV::Num(
+                    ((r.compliance.total - r.compliance.non_compliant) * 1000)
+                        .checked_div(r.compliance.total)
+                        .map_or(1000, |p| p as i64),
+                ),
+                _ => SV::text(&r.group),
+            },
+        );
+        rows
+    }
+
+    /// [`Self::app_rows_unsorted`], in the order `s` chose for the view.
+    pub fn app_rows(&self) -> Vec<crate::apps::AppRow> {
+        use crate::sort::SortValue as SV;
+        let mut rows = self.app_rows_unsorted();
+        crate::sort::sort(
+            &mut rows,
+            self.sort_spec(&ViewMode::AppList),
+            |r, c| match c {
+                0 => SV::text(&r.name),
+                1 => SV::text(r.kind_label()),
+                2 => SV::text(&r.app_id),
+                _ => crate::sort::expiry_value(r.soonest.as_ref().map(|(e, _)| *e)),
+            },
+        );
+        rows
+    }
+
+    /// [`Self::group_rows_unsorted`], in the order `s` chose for the view.
+    pub fn group_rows(&self) -> Vec<&c9s_azure::directory::Group> {
+        use crate::sort::SortValue as SV;
+        let mut rows = self.group_rows_unsorted();
+        crate::sort::sort(
+            &mut rows,
+            self.sort_spec(&ViewMode::GroupList),
+            |r, c| match c {
+                0 => SV::text(&r.display_name),
+                1 => SV::text(r.kind_label()),
+                2 => SV::text(&r.mail),
+                _ => SV::text(&r.created),
+            },
+        );
+        rows
+    }
+
+    /// [`Self::role_assignment_rows_unsorted`], in the order `s` chose for the view.
+    pub fn role_assignment_rows(&self) -> Vec<RoleAssignmentRow> {
+        use crate::sort::SortValue as SV;
+        let mut rows = self.role_assignment_rows_unsorted();
+        crate::sort::sort(
+            &mut rows,
+            self.sort_spec(&ViewMode::RoleAssignments),
+            |r, c| match c {
+                0 => SV::text(&r.role_name),
+                1 => SV::text(&r.principal_name),
+                2 => SV::text(&r.assignment.principal_type),
+                3 => SV::text(&r.scope_label),
+                4 => SV::text(&r.origin_label),
+                _ => SV::Num(i64::from(r.assignment.eligible)),
+            },
+        );
+        rows
+    }
+
+    /// [`Self::role_definition_rows_unsorted`], in the order `s` chose for the view.
+    pub fn role_definition_rows(&self) -> Vec<RoleDefinitionRow> {
+        use crate::sort::SortValue as SV;
+        let mut rows = self.role_definition_rows_unsorted();
+        crate::sort::sort(
+            &mut rows,
+            self.sort_spec(&ViewMode::RoleDefinitions),
+            |r, c| match c {
+                0 => SV::text(&r.definition.role_name),
+                1 => SV::text(r.definition.kind_label()),
+                _ => SV::Num(r.assignments as i64),
+            },
+        );
+        rows
+    }
+
+    /// [`Self::exemption_rows_unsorted`], in the order `s` chose for the view.
+    pub fn exemption_rows(&self) -> Vec<ExemptionRow> {
+        use crate::sort::SortValue as SV;
+        let mut rows = self.exemption_rows_unsorted();
+        crate::sort::sort(
+            &mut rows,
+            self.sort_spec(&ViewMode::ExemptionList),
+            |r, c| match c {
+                0 => SV::text(if r.exemption.display_name.is_empty() {
+                    &r.exemption.name
+                } else {
+                    &r.exemption.display_name
+                }),
+                1 => crate::sort::expiry_value(Some(r.expiry)),
+                2 => SV::text(&r.exemption.category),
+                3 => SV::text(&r.assignment),
+                _ => SV::text(&r.scope_label),
+            },
+        );
+        rows
+    }
+
+    /// [`Self::non_compliant_rows_unsorted`], in the order `s` chose for the view.
+    pub fn non_compliant_rows(&self) -> Vec<crate::policy::NonCompliantResource> {
+        use crate::sort::SortValue as SV;
+        let mut rows = self.non_compliant_rows_unsorted();
+        crate::sort::sort(
+            &mut rows,
+            self.sort_spec(&ViewMode::PolicyNonCompliant),
+            |r, c| match c {
+                0 => SV::text(r.state.resource_id.rsplit('/').next().unwrap_or_default()),
+                1 => SV::text(&r.state.resource_type),
+                2 => SV::text(&r.state.resource_group),
+                _ => SV::Num(r.policies.len() as i64),
+            },
+        );
+        rows
+    }
+
+    /// [`Self::type_summary_unsorted`], in the order `s` chose for the view.
+    pub fn type_summary(&self) -> Vec<(String, usize)> {
+        use crate::sort::SortValue as SV;
+        let mut rows = self.type_summary_unsorted();
+        crate::sort::sort(
+            &mut rows,
+            self.sort_spec(&ViewMode::ResourceTypeSummary),
+            |r, c| match c {
+                0 => SV::text(&r.0),
+                _ => SV::Num(r.1 as i64),
+            },
+        );
+        rows
+    }
+
+    /// [`Self::tag_summary_unsorted`], in the order `s` chose for the view.
+    pub fn tag_summary(&self) -> Vec<TagCount> {
+        use crate::sort::SortValue as SV;
+        let mut rows = self.tag_summary_unsorted();
+        crate::sort::sort(
+            &mut rows,
+            self.sort_spec(&ViewMode::TagSummary),
+            |r, c| match c {
+                0 => SV::text(&r.key),
+                1 => SV::text(&r.value),
+                _ => SV::Num(r.count as i64),
+            },
+        );
+        rows
+    }
+
+    /// [`Self::member_rows_unsorted`], in the order `s` chose for the view.
+    pub fn member_rows(&self) -> Option<Vec<c9s_azure::directory::Principal>> {
+        use crate::sort::SortValue as SV;
+        let mut rows = self.member_rows_unsorted()?;
+        crate::sort::sort(
+            &mut rows,
+            self.sort_spec(&ViewMode::GroupMembers),
+            |r, c| match c {
+                0 => SV::text(&r.display_name),
+                1 => SV::text(&r.kind),
+                _ => SV::text(&r.detail),
+            },
+        );
+        Some(rows)
+    }
+
+    /// [`Self::member_of_rows_unsorted`], in the order `s` chose for the view.
+    pub fn member_of_rows(&self) -> Option<Vec<c9s_azure::directory::Principal>> {
+        use crate::sort::SortValue as SV;
+        let mut rows = self.member_of_rows_unsorted()?;
+        crate::sort::sort(
+            &mut rows,
+            self.sort_spec(&ViewMode::MemberOf),
+            |r, c| match c {
+                0 => SV::text(&r.display_name),
+                1 => SV::text(&r.kind),
+                _ => SV::text(&r.detail),
+            },
+        );
+        Some(rows)
+    }
+
+    /// How `view` is sorted, if `s` chose a column for it.
+    pub fn sort_spec(&self, view: &ViewMode) -> Option<crate::sort::SortSpec> {
+        self.sorts.get(view).copied()
+    }
+
     /// Filter `items` by the current `/` text plus an extra filter identified
     /// by `signature` (part of the memo key; empty means none), reusing the
     /// previous result when neither changed. `matches` gets the lowercase
-    /// text filter, which may be empty.
+    /// text filter, which may be empty. With `sort`, the kept items are
+    /// in that order (memoized with the filter).
     fn filter_list_with<'a, T>(
         &self,
         kind: ListKind,
         items: &'a [T],
         signature: &str,
         matches: impl Fn(&T, &str) -> bool,
+        sort: Option<crate::sort::SortBy<'_, T>>,
     ) -> Vec<&'a T> {
-        if self.filter.is_empty() && signature.is_empty() {
+        if self.filter.is_empty() && signature.is_empty() && sort.is_none() {
             return items.iter().collect();
         }
         let key = (kind, items.as_ptr() as usize, items.len());
-        let memo_filter = format!("{signature}\u{0}{}", self.filter);
+        let sorted = sort
+            .as_ref()
+            .map(|(spec, _)| format!("{}:{}", spec.column, spec.descending))
+            .unwrap_or_default();
+        let memo_filter = format!("{signature}\u{0}{}\u{0}{sorted}", self.filter);
         let mut memo = self.filter_memo.lock().unwrap_or_else(|e| e.into_inner());
         if memo.key != Some(key) || memo.filter != memo_filter {
             let needle = self.filter.to_ascii_lowercase();
@@ -1785,6 +2059,15 @@ impl AppState {
                 .filter(|(_, item)| matches(item, &needle))
                 .map(|(i, _)| i)
                 .collect();
+            // Sorted once per filter and order, not on every frame.
+            if let Some((spec, key)) = &sort {
+                let kept = std::mem::take(&mut memo.indices);
+                memo.indices =
+                    crate::sort::order(kept.len(), *spec, |i, c| key(&items[kept[i]], c))
+                        .into_iter()
+                        .map(|i| kept[i])
+                        .collect();
+            }
             memo.key = Some(key);
             memo.filter = memo_filter;
         }

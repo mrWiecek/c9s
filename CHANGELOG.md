@@ -12,6 +12,48 @@ Release process, audit and rollback: [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-11-09
+
+### Added
+- **Sort any list by a column (`s`).** `s` opens *Sort by* with the view's
+  columns: pick one (↑/↓ and Enter, or its number) to sort by it; the same
+  column again sorts the other way; `0` goes back to the view's own order.
+  Text sorts ignoring case, numbers and dates as numbers (soonest expiry
+  first). Each view keeps its own order, the status bar shows it ("sorted
+  by Type ↓"), and the highlighted item stays highlighted. Works in
+  subscriptions, resource groups, resources, `:type`, `:tag`, `:ctx`,
+  `:policy` (and non-compliant resources), `:compliance`, `:exemption`,
+  `:ra` (PIM eligible first, too), `:role`, `:group` (and members), `:app`.
+  Large lists are sorted once per change, not on every frame.
+
+## [1.9.1] - 2026-11-09
+
+### Security
+- **SQLite updated** (bundled through `rusqlite` 0.41, `libsqlite3-sys`
+  0.39): fixes CVE-2026-119375 in SQLite (RUSTSEC-2026-0459, medium), which
+  `cargo audit` flagged. The minimum Rust version for building from source
+  is now 1.89 (`rusqlite` 0.41 needs it).
+
+### Added
+- **Easier installs, for Windows and Linux/WSL above all.** Every release
+  now also has:
+  - `install.ps1`: `irm …/releases/latest/download/install.ps1 | iex`
+    installs c9s for the current user (no admin), adds it to PATH, and
+    checks the download against `SHA256SUMS`. Downloads made this way are
+    not blocked by SmartScreen.
+  - `install.sh`: `curl -fsSL …/install.sh | sh` installs to `~/.local/bin`
+    (no sudo), checksum verified; Linux, WSL and macOS.
+  - A static Linux build (`x86_64-unknown-linux-musl`) that runs on any
+    distribution and WSL whatever its glibc, packaged as `.deb` and `.rpm`
+    too.
+  - A Scoop manifest (`scoop install …/latest/download/c9s.json`) and winget
+    manifests (`winget-manifests.zip`, package `mrWiecek.c9s`).
+- [docs/INSTALL.md](docs/INSTALL.md): every way to install, how to verify a
+  download, and what to do when security software or a company policy
+  blocks c9s.
+- CI tests the install scripts on Linux and on Windows (PowerShell 7 and
+  5.1), and builds, installs and runs the `.deb`.
+
 ## [1.9.0] - 2026-11-08
 
 ### Added
@@ -878,7 +920,9 @@ Already in the codebase before this changelog was started:
 - Resource groups and resources are not yet shown from the cache before Azure
   answers (M1 step 4).
 
-[Unreleased]: https://github.com/mrWiecek/c9s/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/mrWiecek/c9s/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/mrWiecek/c9s/compare/v1.9.1...v1.10.0
+[1.9.1]: https://github.com/mrWiecek/c9s/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/mrWiecek/c9s/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/mrWiecek/c9s/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/mrWiecek/c9s/compare/v1.6.1...v1.7.0
