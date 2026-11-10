@@ -17,7 +17,7 @@ c9s only reads. Every permission below is a read permission.
 | Group in an account | resource group | location | region |
 | Inventory | Resource Graph | Cloud Asset Inventory | Resource Explorer (Tagging API without it) |
 | `o` opens | Azure Portal | Google Cloud console | AWS console |
-| Policy, RBAC, Entra ID | yes | Azure only | Azure only |
+| Policy, RBAC, Entra ID, cost | yes | Azure only | Azure only |
 
 Without the Azure CLI, c9s starts on `:ctx`, so you can use it for Google
 Cloud or AWS alone.
@@ -36,6 +36,12 @@ Cloud or AWS alone.
 5. Policy views read compliance through Resource Graph (Reader is enough).
    Group and application names come from Microsoft Graph and need the
    directory read access members have by default.
+6. `:cost` reads Cost Management (`Microsoft.CostManagement/query`) and
+   needs **Cost Management Reader** (or Reader) on the scope. Not every
+   agreement type supports every scope (management groups in particular);
+   when one doesn't, c9s shows Azure's message. Cost Management throttles queries: c9s
+   retries when asked to wait and keeps each report for the session, so
+   switching back (or switching currency) asks nothing.
 
 ## Google Cloud
 

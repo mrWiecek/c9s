@@ -128,6 +128,19 @@ pub struct AppState {
     /// `s` open: the highlighted column in the "Sort by" list
     pub sort_picker: Option<usize>,
 
+    /// How `:cost` is set up (period, granularity, grouping, cost type,
+    /// currency), kept across scopes
+    pub cost_settings: crate::cost::CostSettings,
+
+    /// The cost report shown (`:cost`)
+    pub cost_query: Option<crate::cost::CostQuery>,
+
+    /// Cost reports loaded this session, so switching back is instant
+    pub cost_reports: HashMap<crate::cost::CostQuery, crate::cost::CostReport>,
+
+    /// The highlighted bar of the cost chart (`None`: the last)
+    pub cost_bar: Option<usize>,
+
     /// The selected field on an application's Overview (`j`/`k`; `y`/`c`
     /// copy it, `o` offers its page first)
     pub app_field: usize,
@@ -486,6 +499,8 @@ pub enum ViewMode {
     RoleDefinitions,
     ResourceDetail,
     Logs,
+    /// What a scope cost over time (`:cost`)
+    Cost,
 }
 
 /// Tabs of an application.
@@ -707,8 +722,56 @@ impl AppState {
             ViewMode::MemberOf => self.member_of_rows().map_or(0, |r| r.len()),
             ViewMode::RoleDefinitions => self.role_definition_rows().len(),
             ViewMode::ManagementGroupTree => self.tree_rows().len(),
+            ViewMode::Cost => self.cost_rows().len(),
             _ => 0,
         }
+    }
+
+    /// The cost report shown, once loaded.
+    pub fn cost_report(&self) -> Option<&crate::cost::CostReport> {
+        self.cost_reports.get(self.cost_query.as_ref()?)
+    }
+
+    /// The cost table: cost per group (subscriptions by name), filtered
+    /// and in the order `s` chose (most expensive first by default).
+    pub fn cost_rows(&self) -> Vec<crate::cost::CostGroupRow> {
+        use crate::sort::SortValue as SV;
+        let Some(report) = self.cost_report() else {
+            return Vec::new();
+        };
+        let by_subscription = report.query.group_by == crate::cost::CostGroupBy::Subscription;
+        let mut rows: Vec<_> = report
+            .groups(self.cost_settings.usd, |key| {
+                if by_subscription {
+                    self.subscriptions
+                        .iter()
+                        .find(|s| s.id.eq_ignore_ascii_case(key))
+                        .map(|s| s.name.clone())
+                        .unwrap_or_else(|| key.to_string())
+                } else {
+                    key.to_string()
+                }
+            })
+            .into_iter()
+            .filter(|r| {
+                self.filter.is_empty()
+                    || contains_ignore_ascii_case(&r.name, &self.filter)
+                    || contains_ignore_ascii_case(&r.key, &self.filter)
+            })
+            .collect();
+        crate::sort::sort(&mut rows, self.sort_spec(&ViewMode::Cost), |r, c| match c {
+            0 => SV::text(&r.name),
+            _ => SV::Num((r.cost * 100.0).round() as i64),
+        });
+        rows
+    }
+
+    /// The highlighted row of the cost table.
+    pub fn selected_cost_row(&self) -> Option<crate::cost::CostGroupRow> {
+        if self.view != ViewMode::Cost {
+            return None;
+        }
+        self.cost_rows().into_iter().nth(self.list_state.selected)
     }
 
     /// Visible rows of the management group tree (expansion and filter applied).
@@ -2129,6 +2192,7 @@ impl AppState {
             ViewMode::ResourceDetail => {
                 self.selected_resource_detail.as_ref().map(|r| r.id.clone())
             }
+            ViewMode::Cost => self.cost_query.as_ref().map(|q| q.scope.arm_id()),
             ViewMode::ManagementGroupTree => {
                 let row = self.selected_tree_row()?;
                 // AWS: units and accounts by their IDs.
@@ -2202,6 +2266,8 @@ impl AppState {
             | ViewMode::GroupMembers
             | ViewMode::MemberOf
             | ViewMode::AppList => self.selected_arm_id(),
+            // A cost group by its key (a resource group name...).
+            ViewMode::Cost => self.selected_cost_row().map(|r| r.key),
             _ => None,
         }
     }
@@ -2251,6 +2317,7 @@ impl AppState {
                 .role_definition_rows()
                 .iter()
                 .position(|r| r.definition.id == id),
+            ViewMode::Cost => self.cost_rows().iter().position(|r| r.key == id),
             _ => None,
         };
         if let Some(i) = position {

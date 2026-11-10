@@ -72,6 +72,7 @@ pub fn columns(view: &ViewMode) -> &'static [&'static str] {
         ViewMode::GroupList => &["Name", "Kind", "Mail", "Created"],
         ViewMode::GroupMembers | ViewMode::MemberOf => &["Name", "Kind", "Detail"],
         ViewMode::AppList => &["Name", "Kind", "App ID", "Credential expiry"],
+        ViewMode::Cost => &["Name", "Cost"],
         _ => &[],
     }
 }

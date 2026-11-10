@@ -5,6 +5,7 @@ pub mod aws;
 pub mod cache;
 pub mod complete;
 pub mod config;
+pub mod cost;
 pub mod detail;
 pub mod export;
 pub mod fuzzy;

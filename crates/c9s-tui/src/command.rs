@@ -57,6 +57,9 @@ pub enum CommandKind {
     /// Subscriptions ranked by non-compliant resources (a management group
     /// by name, or `all`)
     Compliance { scope: Scope },
+    /// What a scope cost (a management group or subscription by name, or
+    /// `all`: the tenant root group)
+    Cost { scope: Scope },
     /// Tenants: `None` lists them; `Some("all")` or a tenant name/ID switches
     Context(Option<String>),
     /// A known command with bad arguments (the message says why)
@@ -100,6 +103,7 @@ impl CommandKind {
             CommandKind::Groups(_) | CommandKind::Apps(_) => Some(Feature::Directory),
             CommandKind::ManagementGroups => Some(Feature::Tree),
             CommandKind::ResourceGroups { .. } => Some(Feature::Containers),
+            CommandKind::Cost { .. } => Some(Feature::Cost),
             _ => None,
         }
     }
@@ -173,6 +177,16 @@ impl Command {
                     scope: match parts.get(1) {
                         None => Scope::Current,
                         Some(t) if t.eq_ignore_ascii_case("all") => Scope::All,
+                        Some(_) => Scope::Subscription(parts[1..].join(" ")),
+                    },
+                },
+            },
+            "cost" => Self {
+                kind: CommandKind::Cost {
+                    scope: match parts.get(1) {
+                        None => Scope::Current,
+                        Some(t) if t.eq_ignore_ascii_case("all") => Scope::All,
+                        // A management group or subscription by name.
                         Some(_) => Scope::Subscription(parts[1..].join(" ")),
                     },
                 },

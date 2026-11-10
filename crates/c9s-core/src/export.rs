@@ -380,6 +380,24 @@ pub fn view_text(state: &AppState) -> Option<(String, String)> {
             }
         }
         ViewMode::Logs => return None,
+        ViewMode::Cost => {
+            let report = state.cost_report()?;
+            let currency = report.currency_label(state.cost_settings.usd).to_string();
+            let rows = state.cost_rows();
+            let lines = rows.iter().map(|r| {
+                tsv(&[
+                    &r.name,
+                    &format!("{:.2}", r.cost),
+                    &currency,
+                    &format!("{:.1}", r.share),
+                ])
+            });
+            let group = report.query.group_by.label();
+            (
+                format!("cost of {}", count(rows.len(), group)),
+                with_header(&format!("{group}\tcost\tcurrency\tshare %"), lines),
+            )
+        }
     };
     if lines.is_empty() {
         return None;
