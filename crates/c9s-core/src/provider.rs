@@ -49,6 +49,8 @@ pub enum Feature {
     Tree,
     /// A level between accounts and resources (`:rg`)
     Containers,
+    /// Cost Management: `:cost`
+    Cost,
 }
 
 impl Feature {
@@ -60,6 +62,7 @@ impl Feature {
             Feature::Directory => "Entra ID (groups and applications)",
             Feature::Tree => "The tree above accounts",
             Feature::Containers => "Resource groups",
+            Feature::Cost => "Cost",
         }
     }
 }
@@ -111,9 +114,11 @@ impl Provider {
     /// Whether c9s can show `feature` for this cloud.
     pub fn supports(self, feature: Feature) -> bool {
         match feature {
-            Feature::Policy | Feature::Rbac | Feature::Directory | Feature::Containers => {
-                self == Provider::Azure
-            }
+            Feature::Policy
+            | Feature::Rbac
+            | Feature::Directory
+            | Feature::Containers
+            | Feature::Cost => self == Provider::Azure,
             // Management groups; GCP folders; AWS organizational units.
             Feature::Tree => true,
         }

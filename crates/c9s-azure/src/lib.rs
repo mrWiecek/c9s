@@ -2,6 +2,7 @@ pub mod apps;
 pub mod auth;
 pub mod cli;
 pub mod client;
+pub mod cost;
 pub mod directory;
 pub mod management_groups;
 pub mod models;

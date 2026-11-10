@@ -39,6 +39,8 @@ const RA_PRINCIPAL: &str = "ra_principal";
 /// Navigation metadata key: the resource a detail view showed (JSON), with
 /// its tab and cursor, reopened on going back from another detail view.
 const DETAIL: &str = "detail";
+/// The cost view's scope (JSON).
+const COST_SCOPE: &str = "cost_scope";
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use tracing::{debug, info, warn};
 
@@ -513,6 +515,10 @@ impl TuiApp {
         // A command without a scope means "where I am": decide that before
         // the command resets the navigation.
         let context = self.current_context();
+        // `:cost` here: also a highlighted resource group.
+        let here = matches!(command.kind, CommandKind::Cost { .. })
+            .then(|| self.cost_here())
+            .flatten();
         // Commands always start a new, unscoped navigation.
         self.state_mut().scope_group = None;
         let mut command = command;
@@ -527,7 +533,7 @@ impl TuiApp {
             | CommandKind::RoleAssignments { scope }
                 if *scope == Scope::Current =>
             {
-                *scope = context;
+                *scope = context.clone();
             }
             _ => {}
         }
@@ -615,6 +621,22 @@ impl TuiApp {
             CommandKind::Compliance { scope } => {
                 debug!("Command: compliance, scope {:?}", scope);
                 self.open_compliance(scope);
+            }
+            CommandKind::Cost { scope } => {
+                debug!("Command: cost, scope {:?}", scope);
+                let scope = match scope {
+                    Scope::Current => match here {
+                        Some(here) => Some(here),
+                        None => self.cost_scope(context),
+                    },
+                    other => self.cost_scope(other),
+                };
+                if let Some(scope) = scope {
+                    let state = self.state_mut();
+                    state.clear_navigation();
+                    state.filter.clear();
+                    self.core.open_cost(scope, false);
+                }
             }
             CommandKind::Context(None) => {
                 debug!("Command: tenants");
@@ -1117,6 +1139,11 @@ impl TuiApp {
                 }
             }
             (ViewMode::TenantList, _) => self.core.request(LoadRequest::Tenants),
+            (ViewMode::Cost, _) => {
+                if let Some(query) = self.state().cost_query.clone() {
+                    self.core.open_cost(query.scope, true);
+                }
+            }
             (ViewMode::PolicyAssignments, _) => {
                 if let Some(scope) = self.state().policy_scope.clone() {
                     self.core.open_policy(scope);
@@ -1200,6 +1227,15 @@ impl TuiApp {
                 state.ra_role = ctx.metadata.get(RA_ROLE).cloned();
                 state.ra_principal = ctx.metadata.get(RA_PRINCIPAL).cloned();
             }
+            // The cost view: the scope it showed.
+            let cost_scope = (state.view == ViewMode::Cost)
+                .then(|| ctx.metadata.get(COST_SCOPE))
+                .flatten()
+                .and_then(|s| serde_json::from_str::<c9s_core::cost::CostScope>(s).ok());
+            if let Some(scope) = cost_scope {
+                self.core.open_cost(scope, false);
+            }
+            let state = self.state_mut();
             // Back to the policy view keeps its scope (still in state).
             state.resource_query = ctx
                 .metadata
@@ -1480,6 +1516,231 @@ impl TuiApp {
         state.clear_navigation();
         state.filter.clear();
         self.core.open_exemptions(scope);
+    }
+
+    /// The cost scope for a command scope: a management group (`all`: the
+    /// tenant root group) or a subscription. Shows an error and returns
+    /// `None` when it can't be found.
+    fn cost_scope(&mut self, scope: Scope) -> Option<c9s_core::cost::CostScope> {
+        use c9s_core::cost::CostScope;
+        let group = |app: &Self, id: String| {
+            let name = app
+                .state()
+                .scope_tree
+                .as_ref()
+                .and_then(|t| t.label_of(&id))
+                .unwrap_or(&id)
+                .to_string();
+            CostScope::ManagementGroup { id, name }
+        };
+        match scope {
+            Scope::Group(id) => Some(group(self, id)),
+            Scope::All | Scope::Current => match self.state().scope_tree.as_ref() {
+                Some(tree) => {
+                    let root = tree.root.clone();
+                    Some(group(self, root))
+                }
+                None => {
+                    self.state_mut().set_error(Some(
+                        "Cost for the whole tenant needs the management group tree, which \
+                         isn't loaded (see :mg). Name a subscription instead: :cost <subscription>"
+                            .into(),
+                    ));
+                    None
+                }
+            },
+            Scope::Subscription(name) => {
+                if let Some(id) = self.find_group(&name) {
+                    return Some(group(self, id));
+                }
+                match self.find_subscription(&name).cloned() {
+                    Some(sub) => Some(CostScope::Subscription {
+                        id: sub.id,
+                        name: sub.name,
+                    }),
+                    None => {
+                        self.state_mut().set_error(Some(format!(
+                            "No management group or subscription named {name}"
+                        )));
+                        None
+                    }
+                }
+            }
+        }
+    }
+
+    /// The scope highlighted in the current view, for `$`: a resource
+    /// group, subscription or management group.
+    fn cost_here(&self) -> Option<c9s_core::cost::CostScope> {
+        use c9s_core::cost::CostScope;
+        let state = self.state();
+        let subscription = |id: &str| {
+            let name = state
+                .subscriptions
+                .iter()
+                .find(|s| s.id.eq_ignore_ascii_case(id))
+                .map_or_else(|| id.to_string(), |s| s.name.clone());
+            (id.to_string(), name)
+        };
+        match state.view {
+            ViewMode::ResourceGroupList => state.selected_resource_group().map(|rg| {
+                let (subscription_id, subscription_name) = subscription(&rg.subscription_id);
+                CostScope::ResourceGroup {
+                    subscription_id,
+                    subscription_name,
+                    name: rg.name.clone(),
+                }
+            }),
+            ViewMode::ResourceList | ViewMode::ResourceTypeSummary | ViewMode::TagSummary => {
+                let rg = state.current_resource_group.clone()?;
+                let sub = state.selected_subscription.as_ref()?;
+                Some(CostScope::ResourceGroup {
+                    subscription_id: sub.id.clone(),
+                    subscription_name: sub.name.clone(),
+                    name: rg,
+                })
+            }
+            ViewMode::SubscriptionList => {
+                state
+                    .selected_subscription()
+                    .map(|s| CostScope::Subscription {
+                        id: s.id.clone(),
+                        name: s.name.clone(),
+                    })
+            }
+            ViewMode::ComplianceRanking => state.selected_compliance_row().map(|r| {
+                let (id, name) = subscription(&r.subscription_id);
+                CostScope::Subscription { id, name }
+            }),
+            ViewMode::ManagementGroupTree => {
+                let row = state.selected_tree_row()?;
+                match row.kind {
+                    TreeRowKind::Subscription => {
+                        let (id, name) = subscription(&row.key);
+                        Some(CostScope::Subscription { id, name })
+                    }
+                    TreeRowKind::ManagementGroup => Some(CostScope::ManagementGroup {
+                        name: state
+                            .scope_tree
+                            .as_ref()
+                            .and_then(|t| t.label_of(&row.key))
+                            .unwrap_or(&row.key)
+                            .to_string(),
+                        id: row.key,
+                    }),
+                    TreeRowKind::Unplaced => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// `$`: the cost of what is highlighted (Esc comes back).
+    fn open_cost_here(&mut self) {
+        if let Some(why) = self
+            .state()
+            .provider
+            .unsupported(c9s_core::provider::Feature::Cost)
+        {
+            self.state_mut().set_error(Some(why));
+            return;
+        }
+        let Some(scope) = self.cost_here() else {
+            self.state_mut().notice = Some(
+                "$ shows the cost of a highlighted subscription, resource group or \
+                 management group (or type :cost <subscription>)"
+                    .into(),
+            );
+            return;
+        };
+        self.push_current_context(None);
+        let state = self.state_mut();
+        state.filter.clear();
+        self.core.open_cost(scope, false);
+    }
+
+    /// Enter in `:cost`: the highlighted resource group's (or
+    /// subscription's) own cost.
+    fn cost_drill_in(&mut self) {
+        use c9s_core::cost::{CostGroupBy, CostScope};
+        let state = self.state();
+        let (Some(row), Some(query)) = (state.selected_cost_row(), state.cost_query.clone()) else {
+            return;
+        };
+        let next = match (&query.scope, query.group_by) {
+            (CostScope::Subscription { id, name }, CostGroupBy::ResourceGroup)
+                if !row.key.is_empty() =>
+            {
+                Some(CostScope::ResourceGroup {
+                    subscription_id: id.clone(),
+                    subscription_name: name.clone(),
+                    name: row.key.clone(),
+                })
+            }
+            (CostScope::ManagementGroup { .. }, CostGroupBy::Subscription)
+                if !row.key.is_empty() =>
+            {
+                Some(CostScope::Subscription {
+                    id: row.key.clone(),
+                    name: row.name.clone(),
+                })
+            }
+            _ => None,
+        };
+        match next {
+            Some(scope) => {
+                self.push_current_context(None);
+                self.state_mut().filter.clear();
+                self.core.open_cost(scope, false);
+            }
+            None => {
+                self.state_mut().notice = Some(
+                    "Enter opens a resource group's or subscription's cost: group by it with b"
+                        .into(),
+                )
+            }
+        }
+    }
+
+    /// The cost view's own keys: period, granularity, grouping, cost type,
+    /// currency, and moving along the chart. `true` when the key was one.
+    fn handle_cost_key(&mut self, key: KeyEvent) -> bool {
+        let state = self.state();
+        let mut settings = state.cost_settings;
+        let bars = state.cost_query.as_ref().map_or(0, |q| q.buckets().len());
+        let bar = state.cost_bar.unwrap_or(bars.saturating_sub(1));
+        match key.code {
+            KeyCode::Char('p') => settings.period = settings.period.next(),
+            KeyCode::Char('m') => settings.granularity = settings.granularity.next(),
+            KeyCode::Char('b') => {
+                // From the grouping shown (the scope may not offer the setting's).
+                let Some(query) = state.cost_query.as_ref() else {
+                    return true;
+                };
+                settings.group_by = query.group_by.next_at(&query.scope);
+            }
+            KeyCode::Char('a') => settings.amortized = !settings.amortized,
+            KeyCode::Char('u') => settings.usd = !settings.usd,
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.state_mut().cost_bar = Some(bar.saturating_sub(1));
+                return true;
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.state_mut().cost_bar = Some((bar + 1).min(bars.saturating_sub(1)));
+                return true;
+            }
+            KeyCode::Home => {
+                self.state_mut().cost_bar = Some(0);
+                return true;
+            }
+            KeyCode::End => {
+                self.state_mut().cost_bar = None;
+                return true;
+            }
+            _ => return false,
+        }
+        self.core.set_cost_settings(settings);
+        true
     }
 
     /// `:ra`: the role assignments that matter at a scope (a management
@@ -1937,6 +2198,15 @@ impl TuiApp {
             }
         }
         let tenant = self.state().portal_tenant();
+        // Cost: the scope's cost analysis.
+        if self.state().view == ViewMode::Cost {
+            let url = format!(
+                "{}/costanalysis",
+                detail::portal_url(&id, tenant.as_deref())
+            );
+            self.open_url(&url, "the Azure Portal (cost analysis)");
+            return;
+        }
         // Directory objects open on their Entra page, not as a resource.
         let app = match self.state().view {
             ViewMode::AppList => self.state().selected_app(),
@@ -2052,6 +2322,10 @@ impl TuiApp {
     /// Handle selection (Enter key)
     async fn handle_select(&mut self) -> Result<bool> {
         match self.state().view {
+            ViewMode::Cost => {
+                self.cost_drill_in();
+                Ok(true)
+            }
             ViewMode::ManagementGroupTree => self.handle_tree_select(),
             ViewMode::SubscriptionList => self.handle_subscription_select().await,
             ViewMode::ResourceTypeSummary => {
@@ -2369,6 +2643,15 @@ impl TuiApp {
                 metadata.insert(RA_PRINCIPAL.to_string(), principal.clone());
             }
         }
+        if state.view == ViewMode::Cost {
+            if let Some(scope) = state
+                .cost_query
+                .as_ref()
+                .and_then(|q| serde_json::to_string(&q.scope).ok())
+            {
+                metadata.insert(COST_SCOPE.to_string(), scope);
+            }
+        }
         let ctx = NavigationContext {
             view: state.view.clone(),
             subscription_id: state.selected_subscription.as_ref().map(|s| s.id.clone()),
@@ -2418,7 +2701,14 @@ impl TuiApp {
                 state.sort_picker = Some(at);
                 return Ok(true);
             }
+            KeyCode::Char('$') if self.state().view != ViewMode::Cost => {
+                self.open_cost_here();
+                return Ok(true);
+            }
             _ => {}
+        }
+        if self.state().view == ViewMode::Cost && self.handle_cost_key(key) {
+            return Ok(true);
         }
         if self.state().view == ViewMode::ResourceDetail {
             let tab = self.state().detail_tab;

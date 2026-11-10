@@ -103,6 +103,7 @@ impl Breadcrumb {
             ViewMode::MemberOf => "Member of",
             ViewMode::ResourceDetail => "Resource Detail",
             ViewMode::Logs => "Logs",
+            ViewMode::Cost => "Cost",
         }
     }
 

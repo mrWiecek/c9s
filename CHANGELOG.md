@@ -12,6 +12,28 @@ Release process, audit and rollback: [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-11-10
+
+### Added
+- **Cost (`:cost`, `$`).** What a subscription, resource group or
+  management group cost, from Azure Cost Management: a bar chart per day
+  or month with the total and average, above a table of cost per resource
+  group, resource type, service or (for a management group) subscription,
+  with each one's share. `$` opens the cost of the highlighted
+  subscription, resource group or management group; `:cost [all|<mg>|<sub>]`
+  where you are or by name.
+  - `p` period: last 30 days, last 3 months, last 6 months
+  - `m` daily or monthly bars; `←`/`→` (`h`/`l`) pick a bar and show its amount
+  - `b` group by; `Enter` on a resource group (or subscription) opens its own
+    cost, `Esc` comes back
+  - `a` amortized or actual cost; `u` USD or the billing currency (both come
+    back in one query, so switching currency is instant)
+  - `s` sorts, `/` filters, `c` copies the table, `o` opens cost analysis in
+    the Portal
+  - Reports are kept for the session; `r` loads one again. Throttling
+    (429) is retried after the wait Cost Management asks for. Needs Cost
+    Management Reader (or Reader) on the scope.
+
 ## [1.10.1] - 2026-11-09
 
 ### Tests
@@ -927,7 +949,8 @@ Already in the codebase before this changelog was started:
 - Resource groups and resources are not yet shown from the cache before Azure
   answers (M1 step 4).
 
-[Unreleased]: https://github.com/mrWiecek/c9s/compare/v1.10.1...HEAD
+[Unreleased]: https://github.com/mrWiecek/c9s/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/mrWiecek/c9s/compare/v1.10.1...v1.11.0
 [1.10.1]: https://github.com/mrWiecek/c9s/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/mrWiecek/c9s/compare/v1.9.1...v1.10.0
 [1.9.1]: https://github.com/mrWiecek/c9s/compare/v1.9.0...v1.9.1

@@ -186,6 +186,7 @@ impl App {
             ))),
         };
         let management_groups = Arc::new(ManagementGroupClient::new(tokens.clone()));
+        let cost = Arc::new(c9s_azure::cost::CostClient::new(tokens.clone()));
         // Principal names come from Microsoft Graph: same login, its audience.
         let graph_tokens: Arc<dyn TokenSource> = match tenant {
             Some(tenant) => Arc::new(CachingTokenSource::new(CliTenantTokenSource::for_resource(
@@ -203,6 +204,7 @@ impl App {
         Arc::new(
             GraphFetcher::new(Arc::new(ResourceGraphClient::new(tokens)), arm)
                 .with_management_groups(management_groups)
+                .with_cost(cost)
                 .with_directory(directory),
         )
     }
@@ -567,6 +569,46 @@ impl App {
         }
     }
 
+    /// Show what `scope` cost, with the current cost settings. A report
+    /// loaded before shows at once; otherwise (or when `refresh`) it is
+    /// loaded in the background.
+    pub fn open_cost(&mut self, scope: crate::cost::CostScope, refresh: bool) {
+        let today = chrono::Local::now().date_naive();
+        let query = crate::cost::CostQuery::new(scope, &self.state.cost_settings, today);
+        let state = &mut self.state;
+        if state.view != ViewMode::Cost
+            || state.cost_query.as_ref().map(|q| &q.scope) != Some(&query.scope)
+        {
+            state.list_state.reset();
+            state.cost_bar = None;
+        }
+        state.view = ViewMode::Cost;
+        // (The query groups as the scope allows: a resource group not by
+        // resource group. The setting stays, for when Esc goes back.)
+        state.cost_query = Some(query.clone());
+        if refresh || !state.cost_reports.contains_key(&query) {
+            self.request(LoadRequest::Cost { query });
+        }
+    }
+
+    /// Change the cost settings and show the report for them.
+    pub fn set_cost_settings(&mut self, settings: crate::cost::CostSettings) {
+        let previous = self.state.cost_settings;
+        self.state.cost_settings = settings;
+        let Some(scope) = self.state.cost_query.as_ref().map(|q| q.scope.clone()) else {
+            return;
+        };
+        // A different period or granularity has other bars.
+        if (previous.period, previous.granularity) != (settings.period, settings.granularity) {
+            self.state.cost_bar = None;
+        }
+        // Only the currency changed: the report has both.
+        if CostSettingsKey::of(&previous) != CostSettingsKey::of(&settings) {
+            self.state.list_state.reset();
+            self.open_cost(scope, false);
+        }
+    }
+
     /// Show the policy assignments that apply at `scope` (cached first),
     /// and load fresh assignments and compliance counts in the background.
     pub fn open_policy(&mut self, scope: crate::policy::PolicyScope) {
@@ -762,7 +804,8 @@ impl App {
             | LoadRequest::GroupMembers { .. }
             | LoadRequest::AppDetail { .. }
             | LoadRequest::PolicyStates { .. }
-            | LoadRequest::ResourcePolicy { .. } => return,
+            | LoadRequest::ResourcePolicy { .. }
+            | LoadRequest::Cost { .. } => return,
             LoadRequest::Applications => {
                 repo.document(&self.tenant_key("applications")).map(|doc| {
                     match doc.and_then(|(json, at)| {
@@ -935,6 +978,7 @@ impl App {
             LoadKind::ComplianceSummary => usize::from(self.state.compliance_summary.is_some()),
             LoadKind::PolicyStates => self.state.policy_states.len(),
             LoadKind::ResourcePolicy => usize::from(self.state.resource_policy.is_some()),
+            LoadKind::Cost => usize::from(self.state.cost_report().is_some()),
         }
     }
 
@@ -1201,6 +1245,11 @@ impl App {
                 .principals
                 .extend(items.into_iter().map(|p| (p.id.to_ascii_lowercase(), p))),
             LoadedData::ComplianceRollup(counts) => self.state.compliance_rollup = Some(counts),
+            LoadedData::Cost(report) => {
+                self.state
+                    .cost_reports
+                    .insert(report.query.clone(), *report);
+            }
             LoadedData::PolicyCompliance(scope, counts) => {
                 self.state.policy_compliance = Some((scope, counts))
             }
@@ -1249,6 +1298,8 @@ impl App {
             | LoadRequest::GroupMembers { .. }
             | LoadRequest::PolicyStates { .. }
             | LoadRequest::ResourcePolicy { .. } => return,
+            // Cost reports stay in memory for the session.
+            LoadRequest::Cost { .. } => return,
             LoadRequest::AppDetail { .. } => return,
             LoadRequest::Applications => match serde_json::to_string(&(
                 &self.state.applications,
@@ -1430,6 +1481,22 @@ fn view_of(kind: LoadKind) -> ViewMode {
         LoadKind::Applications => ViewMode::AppList,
         LoadKind::AppDetail => ViewMode::AppDetail,
         LoadKind::GroupMembers => ViewMode::GroupMembers,
+        LoadKind::Cost => ViewMode::Cost,
+    }
+}
+
+/// What of the cost settings changes the report (not the currency).
+#[derive(PartialEq)]
+struct CostSettingsKey(
+    crate::cost::CostPeriod,
+    crate::cost::Granularity,
+    crate::cost::CostGroupBy,
+    bool,
+);
+
+impl CostSettingsKey {
+    fn of(s: &crate::cost::CostSettings) -> Self {
+        Self(s.period, s.granularity, s.group_by, s.amortized)
     }
 }
 

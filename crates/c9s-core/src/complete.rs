@@ -47,6 +47,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("access", "everything one user, group or app can do"),
     ("group", "directory groups and their members"),
     ("app", "app registrations and enterprise applications"),
+    ("cost", "what a subscription, resource group or group cost"),
     ("theme", "switch the colour theme"),
     ("ctx", "switch tenant"),
 ];
@@ -96,7 +97,7 @@ pub fn complete(input: &str, state: &AppState) -> Completion {
                 options.sort();
                 options.dedup();
                 prefixed(word, options.into_iter())
-            } else if cmd == "compliance" || cmd == "exemption" || cmd == "ra" {
+            } else if cmd == "compliance" || cmd == "exemption" || cmd == "ra" || cmd == "cost" {
                 let mut options = vec![("all".to_string(), "whole tenant".to_string())];
                 if let Some(tree) = &state.scope_tree {
                     options.extend(
@@ -105,7 +106,7 @@ pub fn complete(input: &str, state: &AppState) -> Completion {
                             .map(|g| (g.display_name.clone(), "management group".into())),
                     );
                 }
-                if cmd == "exemption" || cmd == "ra" {
+                if cmd == "exemption" || cmd == "ra" || cmd == "cost" {
                     options.extend(
                         state
                             .subscriptions
@@ -400,10 +401,10 @@ mod tests {
         assert_eq!(texts("r"), ["rg", "res", "ra", "role", "group"]);
         assert_eq!(
             texts("t"),
-            ["type", "tag", "theme", "exemption", "ctx"],
+            ["type", "tag", "theme", "exemption", "cost", "ctx"],
             "starting with t, then containing t"
         );
-        assert_eq!(texts("").len(), 16);
+        assert_eq!(texts("").len(), 17);
         assert_eq!(texts("comp"), ["compliance"]);
         assert!(texts("xyz").is_empty());
     }

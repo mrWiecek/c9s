@@ -94,6 +94,13 @@ impl Fetcher for SlowAzure {
                 LoadRequest::ResourceDetail { .. } => {
                     LoadedData::ResourceDetail(serde_json::json!({}))
                 }
+                LoadRequest::Cost { query } => {
+                    LoadedData::Cost(Box::new(c9s_core::cost::CostReport {
+                        query,
+                        currency: "EUR".into(),
+                        entries: vec![],
+                    }))
+                }
             };
             FetchOutcome {
                 data: Ok(data),

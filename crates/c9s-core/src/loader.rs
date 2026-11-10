@@ -111,6 +111,10 @@ pub enum LoadRequest {
         resource_id: String,
         subscription_id: String,
     },
+    /// What a scope cost over a period (Cost Management).
+    Cost {
+        query: crate::cost::CostQuery,
+    },
 }
 
 /// Which list a request fills. One request per kind is in flight at a time.
@@ -138,6 +142,7 @@ pub enum LoadKind {
     ComplianceSummary,
     PolicyStates,
     ResourcePolicy,
+    Cost,
 }
 
 impl LoadKind {
@@ -165,6 +170,7 @@ impl LoadKind {
             LoadKind::ComplianceSummary => "compliance summary",
             LoadKind::PolicyStates => "non-compliant resources",
             LoadKind::ResourcePolicy => "resource policy states",
+            LoadKind::Cost => "cost",
         }
     }
 }
@@ -194,6 +200,7 @@ impl LoadRequest {
             LoadRequest::ComplianceSummary { .. } => LoadKind::ComplianceSummary,
             LoadRequest::PolicyStates { .. } => LoadKind::PolicyStates,
             LoadRequest::ResourcePolicy { .. } => LoadKind::ResourcePolicy,
+            LoadRequest::Cost { .. } => LoadKind::Cost,
         }
     }
 }
@@ -281,6 +288,7 @@ pub enum LoadedData {
     PolicyStates(Vec<PolicyState>),
     /// The resource ID and its policy states.
     ResourcePolicy(String, Vec<PolicyState>),
+    Cost(Box<crate::cost::CostReport>),
 }
 
 /// Outcome of a fetch: the data (or an error), plus the subscriptions that
@@ -595,6 +603,11 @@ impl Fetcher for AzureFetcher {
                     failed_subscriptions: Vec::new(),
                     notice: None,
                 },
+                LoadRequest::Cost { .. } => FetchOutcome {
+                    data: Err("cost is not available with C9S_BACKEND=arm".into()),
+                    failed_subscriptions: Vec::new(),
+                    notice: None,
+                },
             }
         }
         .boxed()
@@ -622,6 +635,8 @@ pub struct GraphFetcher {
     management_groups: Option<Arc<ManagementGroupClient>>,
     /// Names principals (Microsoft Graph), if configured.
     directory: Option<Arc<c9s_azure::directory::DirectoryClient>>,
+    /// Reads cost (Cost Management), if configured.
+    cost: Option<Arc<c9s_azure::cost::CostClient>>,
 }
 
 impl GraphFetcher {
@@ -632,12 +647,19 @@ impl GraphFetcher {
             home_tenant: Arc::new(tokio::sync::OnceCell::new()),
             management_groups: None,
             directory: None,
+            cost: None,
         }
     }
 
     /// Also serve [`LoadRequest::Principals`] through this client.
     pub fn with_directory(mut self, client: Arc<c9s_azure::directory::DirectoryClient>) -> Self {
         self.directory = Some(client);
+        self
+    }
+
+    /// Also serve [`LoadRequest::Cost`] through this client.
+    pub fn with_cost(mut self, client: Arc<c9s_azure::cost::CostClient>) -> Self {
+        self.cost = Some(client);
         self
     }
 
@@ -693,6 +715,26 @@ impl Fetcher for GraphFetcher {
         // Subscriptions come from the Azure CLI (with tenant information).
         if request == LoadRequest::Subscriptions {
             return self.arm.fetch(request, sink);
+        }
+        if let LoadRequest::Cost { query } = &request {
+            let client = self.cost.clone();
+            let query = query.clone();
+            return async move {
+                let data = match client {
+                    None => Err("cost is not configured".to_string()),
+                    Some(client) => match client.query(&query.api()).await {
+                        Ok(table) => crate::cost::CostReport::from_table(query, &table)
+                            .map(|r| LoadedData::Cost(Box::new(r))),
+                        Err(e) => Err(cost_error(e)),
+                    },
+                };
+                FetchOutcome {
+                    data,
+                    failed_subscriptions: vec![],
+                    notice: None,
+                }
+            }
+            .boxed();
         }
         if let LoadRequest::ResourceDetail {
             resource_id,
@@ -1249,6 +1291,7 @@ impl Fetcher for GraphFetcher {
                 | LoadRequest::ComplianceSummary { .. }
                 | LoadRequest::PolicyStates { .. }
                 | LoadRequest::ResourcePolicy { .. }
+                | LoadRequest::Cost { .. }
                 | LoadRequest::ResourceDetail { .. } => {
                     unreachable!("handled above")
                 }
@@ -1350,6 +1393,7 @@ fn empty(kind: LoadKind) -> LoadedData {
         }
         LoadKind::PolicyStates => LoadedData::PolicyStates(vec![]),
         LoadKind::ResourcePolicy => LoadedData::ResourcePolicy(String::new(), vec![]),
+        LoadKind::Cost => unreachable!("cost is loaded by its own fetch"),
     }
 }
 
@@ -1371,6 +1415,19 @@ fn has_built_in_roles(rows: &Result<Vec<serde_json::Value>, String>) -> bool {
 
 /// Resource Graph's role definitions plus ARM's, each role (by GUID) once.
 /// Either source alone is enough; both failing reports the first error.
+/// Cost Management's error, with what to do about the usual ones.
+fn cost_error(e: AzureError) -> String {
+    match &e {
+        AzureError::Http {
+            status: 401 | 403, ..
+        } => format!("{e}\n\nReading cost needs Cost Management Reader (or Reader) on the scope."),
+        AzureError::Http { status: 429, .. } => format!(
+            "{e}\n\nCost Management limits how often cost can be read; try again in a minute."
+        ),
+        _ => e.to_string(),
+    }
+}
+
 /// PIM eligible role assignments: from the tenant root group (at and below
 /// it), else from each subscription. A note when some or all of them
 /// couldn't be read; the active assignments show either way.
@@ -1693,6 +1750,20 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cost_errors_say_what_to_do() {
+        let denied = cost_error(AzureError::Http {
+            status: 403,
+            message: "does not have authorization".into(),
+        });
+        assert!(denied.contains("Cost Management Reader"), "{denied}");
+        let throttled = cost_error(AzureError::Http {
+            status: 429,
+            message: "Too many requests".into(),
+        });
+        assert!(throttled.contains("try again in a minute"), "{throttled}");
+    }
 
     #[tokio::test]
     async fn pim_eligibility_falls_back_to_subscriptions() {

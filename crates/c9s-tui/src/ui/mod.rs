@@ -1,4 +1,5 @@
 pub mod breadcrumb;
+mod cost;
 pub mod help;
 pub mod resource_type;
 pub mod search;
@@ -139,6 +140,7 @@ fn draw_content(f: &mut Frame, area: Rect, app: &mut TuiApp) -> Result<()> {
         ViewMode::GroupMembers | ViewMode::MemberOf => draw_members(f, area, app),
         ViewMode::ResourceDetail => draw_resource_detail(f, area, app),
         ViewMode::Logs => draw_logs(f, area, app),
+        ViewMode::Cost => cost::draw_cost(f, area, app),
     }
 }
 
@@ -2489,8 +2491,8 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &TuiApp) {
             ViewMode::SubscriptionList => vec![
                 ("↑↓/jk", "Navigate"),
                 ("g/G", "First/Last"),
-                ("PgUp/PgDn", "Page"),
                 ("Enter", "Select"),
+                ("$", "Cost"),
                 ("/", "Filter"),
                 (":", "Command"),
                 ("^P", "Go to"),
@@ -2501,8 +2503,8 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &TuiApp) {
             ViewMode::ResourceGroupList => vec![
                 ("↑↓/jk", "Navigate"),
                 ("g/G", "First/Last"),
-                ("PgUp/PgDn", "Page"),
                 ("Enter", "View Resources"),
+                ("$", "Cost"),
                 ("/", "Filter"),
                 (":", "Command"),
                 ("^P", "Go to"),
@@ -2549,6 +2551,19 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &TuiApp) {
                 ("r", "Refresh"),
                 ("Esc", "Back"),
                 ("q", "Quit"),
+            ],
+            ViewMode::Cost => vec![
+                ("p", "Period"),
+                ("m", "Daily/Monthly"),
+                ("b", "Group by"),
+                ("a", "Amortized"),
+                ("u", "USD"),
+                ("←→/hl", "Bar"),
+                ("Enter", "Drill in"),
+                ("s", "Sort"),
+                ("o", "Portal"),
+                ("r", "Refresh"),
+                ("Esc", "Back"),
             ],
             ViewMode::AppList => vec![
                 ("↑↓/jk", "Navigate"),
