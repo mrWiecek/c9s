@@ -311,3 +311,32 @@ async fn enter_takes_the_highlighted_suggestion_and_runs() {
     press(&mut app, KeyCode::Enter).await;
     assert_eq!(app.state().tenant, None, ":ctx all ran as typed");
 }
+
+#[tokio::test]
+async fn enter_with_a_prefix_runs_the_highlighted_subscription() {
+    let (mut app, _azure) = setup();
+    let sub = |id: &str, name: &str| Subscription {
+        id: id.into(),
+        name: name.into(),
+        state: "Enabled".into(),
+        tenant_id: "t-1".into(),
+    };
+    app.state_mut().subscriptions = vec![sub("s-ai", "sub-tst-ai"), sub("s-data", "sub-tst-data")];
+    press(&mut app, KeyCode::Char(':')).await;
+    for c in "res sub-tst-".chars() {
+        press(&mut app, KeyCode::Char(c)).await;
+    }
+    let items = c9s_core::complete::complete(&app.state().command_input, app.state()).items;
+    assert_eq!(items[0].text, "sub-tst-ai", "highlighted first");
+    // Enter runs the highlighted subscription, not the typed prefix.
+    press(&mut app, KeyCode::Enter).await;
+    assert!(app.state().error.is_none(), "{:?}", app.state().error);
+    assert_eq!(app.state().view, ViewMode::ResourceList);
+    assert_eq!(
+        app.state()
+            .selected_subscription
+            .as_ref()
+            .map(|s| s.name.as_str()),
+        Some("sub-tst-ai")
+    );
+}
