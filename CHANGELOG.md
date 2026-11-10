@@ -34,6 +34,13 @@ Release process, audit and rollback: [RELEASING.md](RELEASING.md).
     (429) is retried after the wait Cost Management asks for. Needs Cost
     Management Reader (or Reader) on the scope.
 
+## [1.10.1] - 2026-11-09
+
+### Tests
+- A regression test for Enter after a typed prefix (`:res sub-tst-` with
+  `sub-tst-ai` highlighted): it opens the highlighted subscription instead of
+  failing with "sub-tst- does not exist".
+
 ## [1.10.0] - 2026-11-09
 
 ### Added
@@ -943,7 +950,8 @@ Already in the codebase before this changelog was started:
   answers (M1 step 4).
 
 [Unreleased]: https://github.com/mrWiecek/c9s/compare/v1.11.0...HEAD
-[1.11.0]: https://github.com/mrWiecek/c9s/compare/v1.10.0...v1.11.0
+[1.11.0]: https://github.com/mrWiecek/c9s/compare/v1.10.1...v1.11.0
+[1.10.1]: https://github.com/mrWiecek/c9s/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/mrWiecek/c9s/compare/v1.9.1...v1.10.0
 [1.9.1]: https://github.com/mrWiecek/c9s/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/mrWiecek/c9s/compare/v1.8.0...v1.9.0
