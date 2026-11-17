@@ -1088,6 +1088,15 @@ impl App {
                 }
                 self.write_scope(&pending.request, &outcome.failed_subscriptions);
                 self.mark(kind, DataSource::Azure, None);
+                // A row asked for before the list loaded (`R`, `S`).
+                if let Some((view, id)) = self.state.select_on_load.clone() {
+                    if view == view_of(kind) {
+                        if self.state.view == view && self.state.list_state.selected == 0 {
+                            self.state.select_id(&id);
+                        }
+                        self.state.select_on_load = None;
+                    }
+                }
                 if kind == LoadKind::RoleAssignments {
                     // New principals may have appeared: name them.
                     self.load_principal_names();

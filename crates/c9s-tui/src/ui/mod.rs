@@ -2021,7 +2021,7 @@ fn draw_resource_detail(f: &mut Frame, area: Rect, app: &mut TuiApp) -> Result<(
     highlight_search(&mut lines, state);
     // The cursor of a tab with rows (Tags, Policy): Enter opens that row.
     if let Some(n) = state.detail_rows().filter(|n| *n > 0) {
-        let line = detail_row_line(tab, state.detail_cursor.min(n - 1));
+        let line = state.detail_row_line(state.detail_cursor.min(n - 1));
         if let Some(line) = lines.get_mut(line) {
             *line = std::mem::take(line).patch_style(theme().selection());
         }
@@ -2084,7 +2084,11 @@ pub fn detail_lines(state: &AppState) -> Vec<Line<'static>> {
     };
     let doc = state.resource_document.as_ref();
     match state.detail_tab {
-        DetailTab::Overview => overview_lines(&detail::overview(doc, resource)),
+        DetailTab::Overview => overview_lines(
+            &state
+                .detail_overview()
+                .unwrap_or_else(|| detail::overview(doc, resource)),
+        ),
         DetailTab::Tags => {
             let tags = detail::tags(doc, resource);
             if tags.is_empty() {
@@ -2207,15 +2211,6 @@ fn policy_state_lines(state: &AppState) -> Vec<Line<'static>> {
         Line::from(spans)
     }));
     lines
-}
-
-/// The line of the detail view's content that shows row `row` of a tab with
-/// rows (the Policy tab starts with a header line).
-pub fn detail_row_line(tab: DetailTab, row: usize) -> usize {
-    match tab {
-        DetailTab::Policy => row + 1,
-        _ => row,
-    }
 }
 
 /// The Overview tab: a heading per section, then aligned label/value rows.
@@ -2516,8 +2511,9 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &TuiApp) {
             ViewMode::ResourceList => vec![
                 ("↑↓/jk", "Navigate"),
                 ("g/G", "First/Last"),
-                ("PgUp/PgDn", "Page"),
                 ("Enter", "Details"),
+                ("R", "Resource group"),
+                ("S", "Subscription"),
                 ("/", "Filter"),
                 (":", "Command"),
                 ("^P", "Go to"),
@@ -2691,15 +2687,15 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &TuiApp) {
             ],
             ViewMode::ResourceDetail => vec![
                 ("Tab/1-4", "Tabs"),
-                ("↑↓/jk", "Scroll/Select"),
-                ("Enter", "Open tag/policy"),
+                ("↑↓/jk", "Select"),
+                ("Enter", "Open"),
+                ("R", "Resource group"),
+                ("S", "Subscription"),
                 ("/ n N", "Search"),
                 ("c", "Copy"),
                 ("y", "Copy ID"),
                 ("o", "Portal"),
-                ("r", "Refresh"),
                 ("Esc", "Back"),
-                ("q", "Quit"),
             ],
             _ => vec![
                 ("↑↓/jk", "Navigate"),

@@ -97,6 +97,7 @@ c9s --timings                              # launch, print a timing summary on e
 | `o` | Open the selected item in the Azure Portal |
 | `Tab`, `1`-`4` | Detail view: Overview / Tags / Policy / JSON |
 | `Enter` (Tags tab) | Every resource in the tenant with the selected tag |
+| `R` / `S` (resource list, resource detail) | Go to the resource's resource group (its resources, the resource highlighted) or subscription (its resource groups, the resource's group highlighted); `Esc` comes back. In the detail Overview, `Enter` on the Resource group or Subscription row does the same |
 | `Enter` (Policy tab) | The selected policy's definition (initiative or direct, and where it is assigned, show in the tab) |
 | `?` | Help |
 | `q` / `Ctrl+C` | Quit |

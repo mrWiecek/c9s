@@ -12,6 +12,17 @@ Release process, audit and rollback: [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-11-17
+
+### Added
+- **Go to a resource's resource group or subscription.** In the resource
+  list and the resource detail, `R` opens the resource group the resource
+  is in (its resources, the resource highlighted) and `S` its subscription
+  (its resource groups, the resource's group highlighted); `Esc` comes back.
+- **The detail Overview's rows can be selected** (`j`/`k`): `Enter` on
+  *Resource group* or *Subscription* goes there. The Subscription row now
+  names the subscription ("prod (1234…)"), not only its ID.
+
 ## [1.11.0] - 2026-11-10
 
 ### Added
@@ -949,7 +960,8 @@ Already in the codebase before this changelog was started:
 - Resource groups and resources are not yet shown from the cache before Azure
   answers (M1 step 4).
 
-[Unreleased]: https://github.com/mrWiecek/c9s/compare/v1.11.0...HEAD
+[Unreleased]: https://github.com/mrWiecek/c9s/compare/v1.12.0...HEAD
+[1.12.0]: https://github.com/mrWiecek/c9s/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/mrWiecek/c9s/compare/v1.10.1...v1.11.0
 [1.10.1]: https://github.com/mrWiecek/c9s/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/mrWiecek/c9s/compare/v1.9.1...v1.10.0
