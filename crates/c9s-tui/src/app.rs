@@ -1,6 +1,6 @@
 use crate::desktop::{Desktop, SystemDesktop};
 use crate::event::Event;
-use crate::ui::{self, search};
+use crate::ui::search;
 use crate::{Command, CommandKind, Scope};
 use anyhow::Result;
 use c9s_core::complete;
@@ -1273,7 +1273,7 @@ impl TuiApp {
                 let state = self.state_mut();
                 state.detail_tab = DetailTab::ALL.get(tab).copied().unwrap_or_default();
                 state.detail_cursor = cursor;
-                state.detail_scroll_to = Some(ui::detail_row_line(state.detail_tab, cursor));
+                state.detail_scroll_to = Some(state.detail_row_line(cursor));
                 if state.detail_tab == DetailTab::Policy {
                     self.core.load_resource_policy(false);
                 }
@@ -1412,13 +1412,27 @@ impl TuiApp {
             return false;
         };
         state.detail_cursor = to(state.detail_cursor, n).min(n - 1);
-        state.detail_scroll_to = Some(ui::detail_row_line(state.detail_tab, state.detail_cursor));
+        state.detail_scroll_to = Some(state.detail_row_line(state.detail_cursor));
         true
     }
 
     /// `Enter` in the detail view: the tag's resources across the tenant, or
     /// the policy's definition.
     fn open_detail_row(&mut self) {
+        if let Some((label, _)) = self.state().selected_detail_field() {
+            match label.as_str() {
+                detail::RESOURCE_GROUP_ROW => self.go_to_resource_group(),
+                detail::SUBSCRIPTION_ROW => self.go_to_subscription(),
+                _ => {
+                    self.state_mut().notice = Some(
+                        "Enter on Resource group or Subscription goes there (also R, S); \
+                         y copies the ID, c the tab"
+                            .into(),
+                    )
+                }
+            }
+            return;
+        }
         if let Some((key, value)) = self.state().selected_detail_tag() {
             self.open_tag_resources(key, value);
         } else if let Some(policy) = self.state().selected_detail_policy() {
@@ -1430,6 +1444,95 @@ impl TuiApp {
                 _ => self.open_policy_definition(policy),
             }
         }
+    }
+
+    /// The resource shown or highlighted (resource list or detail view).
+    fn current_resource(&self) -> Option<c9s_core::models::Resource> {
+        let state = self.state();
+        match state.view {
+            ViewMode::ResourceList => state.selected_resource().cloned(),
+            ViewMode::ResourceDetail => state.selected_resource_detail.clone(),
+            _ => None,
+        }
+    }
+
+    /// Make the resource's subscription the current one (a placeholder
+    /// with its ID if the list doesn't have it).
+    fn select_subscription_of(&mut self, resource: &c9s_core::models::Resource) {
+        let sub = self
+            .state()
+            .subscriptions
+            .iter()
+            .find(|s| s.id.eq_ignore_ascii_case(&resource.subscription_id))
+            .cloned()
+            .unwrap_or_else(|| c9s_core::models::Subscription {
+                id: resource.subscription_id.clone(),
+                name: resource.subscription_id.clone(),
+                state: "Enabled".into(),
+                tenant_id: String::new(),
+            });
+        let state = self.state_mut();
+        state.selected_subscription = Some(sub);
+        state.scope_group = None;
+    }
+
+    /// `R` (or Enter on the Overview's Resource group row): the resource
+    /// group of the highlighted or shown resource, with the resource
+    /// highlighted. Esc comes back.
+    fn go_to_resource_group(&mut self) {
+        let Some(resource) = self.current_resource() else {
+            return;
+        };
+        if !self.state().provider.supports(Feature::Containers)
+            || resource.resource_group.is_empty()
+        {
+            self.state_mut().notice = Some("This resource is in no resource group".into());
+            return;
+        }
+        self.push_current_context(None);
+        self.select_subscription_of(&resource);
+        self.show_resources(
+            vec![resource.subscription_id.clone()],
+            Some(resource.resource_group.clone()),
+            false,
+        );
+        // Cached rows show at once; else when the list has loaded.
+        let state = self.state_mut();
+        state.select_id(&resource.id);
+        state.select_on_load = Some((ViewMode::ResourceList, resource.id.clone()));
+    }
+
+    /// `S` (or Enter on the Overview's Subscription row): the subscription
+    /// of the highlighted or shown resource: its resource groups, with the
+    /// resource's group highlighted (clouds without groups: its resources).
+    fn go_to_subscription(&mut self) {
+        let Some(resource) = self.current_resource() else {
+            return;
+        };
+        if resource.subscription_id.is_empty() {
+            self.state_mut().notice = Some("This resource is in no subscription".into());
+            return;
+        }
+        self.push_current_context(None);
+        self.select_subscription_of(&resource);
+        let id = resource.subscription_id.clone();
+        let (view, row) = if self.state().provider.supports(Feature::Containers) {
+            self.show_resource_groups(vec![id.clone()], false);
+            (
+                ViewMode::ResourceGroupList,
+                format!(
+                    "/subscriptions/{id}/resourceGroups/{}",
+                    resource.resource_group
+                ),
+            )
+        } else {
+            self.show_resources(vec![id], None, false);
+            (ViewMode::ResourceList, resource.id.clone())
+        };
+        // Cached rows show at once; else when the list has loaded.
+        let state = self.state_mut();
+        state.select_id(&row);
+        state.select_on_load = Some((view, row));
     }
 
     /// Every resource in the tenant with `key=value` (from a detail view's
@@ -2699,6 +2802,24 @@ impl TuiApp {
                 let state = self.state_mut();
                 let at = state.sort_spec(&state.view).map_or(0, |s| s.column);
                 state.sort_picker = Some(at);
+                return Ok(true);
+            }
+            KeyCode::Char('R')
+                if matches!(
+                    self.state().view,
+                    ViewMode::ResourceList | ViewMode::ResourceDetail
+                ) =>
+            {
+                self.go_to_resource_group();
+                return Ok(true);
+            }
+            KeyCode::Char('S')
+                if matches!(
+                    self.state().view,
+                    ViewMode::ResourceList | ViewMode::ResourceDetail
+                ) =>
+            {
+                self.go_to_subscription();
                 return Ok(true);
             }
             KeyCode::Char('$') if self.state().view != ViewMode::Cost => {

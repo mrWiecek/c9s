@@ -13,6 +13,29 @@ pub const MAX_PROPERTY_ROWS: usize = 60;
 /// How deep nested `properties` objects are flattened into dotted names.
 const MAX_DEPTH: usize = 3;
 
+/// The Overview row naming the resource's resource group (Enter opens it).
+pub const RESOURCE_GROUP_ROW: &str = "Resource group";
+/// The Overview row naming the resource's subscription (Enter opens it).
+pub const SUBSCRIPTION_ROW: &str = "Subscription";
+
+/// The line each Overview row is drawn on: a heading per section, a blank
+/// line before every section but the first.
+pub fn row_lines(sections: &[Section]) -> Vec<usize> {
+    let mut lines = Vec::new();
+    let mut line = 0;
+    for (i, section) in sections.iter().enumerate() {
+        if i > 0 {
+            line += 1;
+        }
+        line += 1; // the heading
+        for _ in &section.rows {
+            lines.push(line);
+            line += 1;
+        }
+    }
+    lines
+}
+
 /// A titled group of label/value rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Section {
@@ -47,8 +70,8 @@ pub fn overview(doc: Option<&Value>, resource: &Resource) -> Vec<Section> {
             main.push(("Zones".into(), zones.join(", ")));
         }
     }
-    main.push(("Resource group".into(), resource.resource_group.clone()));
-    main.push(("Subscription".into(), resource.subscription_id.clone()));
+    main.push((RESOURCE_GROUP_ROW.into(), resource.resource_group.clone()));
+    main.push((SUBSCRIPTION_ROW.into(), resource.subscription_id.clone()));
     if let Some(state) = doc
         .and_then(|d| d.pointer("/properties/provisioningState"))
         .and_then(scalar)

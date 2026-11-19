@@ -81,6 +81,19 @@ impl Fetcher for FakeAzure {
                     ],
                 }))
             }
+            // The subscription's resource groups: rg-app second.
+            LoadRequest::ResourceGroups { .. } => Ok(LoadedData::ResourceGroups(
+                ["rg-web", "rg-app"]
+                    .into_iter()
+                    .map(|name| c9s_core::models::ResourceGroup {
+                        id: format!("/subscriptions/sub-1/resourceGroups/{name}"),
+                        name: name.into(),
+                        location: "westeurope".into(),
+                        subscription_id: "sub-1".into(),
+                        tags: HashMap::new(),
+                    })
+                    .collect(),
+            )),
             _ => Err("unexpected request".into()),
         };
         async move {
@@ -468,4 +481,121 @@ async fn enter_on_a_tag_lists_the_tenant_resources_with_it_and_esc_restores_the_
         app.state().resource_query.is_empty(),
         "the tag filter is gone"
     );
+}
+
+/// The Overview row with this label, and its index among the rows.
+fn overview_row(app: &TuiApp, label: &str) -> (usize, String) {
+    app.state()
+        .detail_overview()
+        .unwrap()
+        .into_iter()
+        .flat_map(|s| s.rows)
+        .enumerate()
+        .find(|(_, (l, _))| l == label)
+        .map(|(i, (_, v))| (i, v))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn overview_rows_go_to_the_resource_group_and_subscription() {
+    let (mut app, azure, _) = setup(Ok(vm_document()));
+    let mut loads = app.take_load_receiver().unwrap();
+    press(&mut app, KeyCode::Enter).await;
+    app.apply_load(loads.recv().await.unwrap());
+    assert_eq!(app.state().view, ViewMode::ResourceDetail);
+
+    // The subscription is named, not only its ID.
+    let (_, sub) = overview_row(&app, "Subscription");
+    assert_eq!(sub, "prod (sub-1)");
+
+    // j to the Resource group row (highlighted), Enter: its resources,
+    // the VM highlighted.
+    let (at, rg) = overview_row(&app, "Resource group");
+    assert_eq!(rg, "rg-app");
+    for _ in 0..at {
+        press(&mut app, KeyCode::Char('j')).await;
+    }
+    assert_eq!(
+        app.state().selected_detail_field().unwrap().0,
+        "Resource group"
+    );
+    press(&mut app, KeyCode::Enter).await;
+    assert_eq!(app.state().view, ViewMode::ResourceList);
+    assert_eq!(
+        app.state().current_resource_group.as_deref(),
+        Some("rg-app")
+    );
+    app.apply_load(loads.recv().await.unwrap());
+    assert_eq!(app.state().selected_resource().unwrap().id, VM_ID);
+    assert!(azure.requests.lock().unwrap().iter().any(|r| matches!(
+        r,
+        LoadRequest::Resources { resource_group: Some(g), subscription_ids }
+            if g == "rg-app" && subscription_ids == &["sub-1".to_string()]
+    )));
+
+    // Esc: back on the detail view, on the same row.
+    press(&mut app, KeyCode::Esc).await;
+    assert_eq!(app.state().view, ViewMode::ResourceDetail);
+    assert_eq!(
+        app.state().selected_detail_field().unwrap().0,
+        "Resource group"
+    );
+
+    // The Subscription row: its resource groups, the VM's highlighted
+    // once they load.
+    press(&mut app, KeyCode::Char('j')).await;
+    assert_eq!(
+        app.state().selected_detail_field().unwrap().0,
+        "Subscription"
+    );
+    press(&mut app, KeyCode::Enter).await;
+    assert_eq!(app.state().view, ViewMode::ResourceGroupList);
+    assert_eq!(
+        app.state().selected_subscription.as_ref().unwrap().id,
+        "sub-1"
+    );
+    while app.state().loading {
+        app.apply_load(loads.recv().await.unwrap());
+    }
+    assert_eq!(
+        app.state().selected_resource_group().unwrap().name,
+        "rg-app"
+    );
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    let text = screen(&mut terminal, &mut app);
+    assert!(text.contains("rg-web"), "{text}");
+}
+
+#[tokio::test]
+async fn r_and_s_from_the_resource_list_and_detail() {
+    let (mut app, _, _) = setup(Ok(vm_document()));
+    let mut loads = app.take_load_receiver().unwrap();
+
+    // S in the list: the subscription's resource groups; Esc comes back.
+    press(&mut app, KeyCode::Char('S')).await;
+    assert_eq!(app.state().view, ViewMode::ResourceGroupList);
+    while app.state().loading {
+        app.apply_load(loads.recv().await.unwrap());
+    }
+    assert_eq!(
+        app.state().selected_resource_group().unwrap().name,
+        "rg-app"
+    );
+    press(&mut app, KeyCode::Esc).await;
+    assert_eq!(app.state().view, ViewMode::ResourceList);
+
+    // R in the detail view: the resource group's resources.
+    press(&mut app, KeyCode::Enter).await;
+    app.apply_load(loads.recv().await.unwrap());
+    press(&mut app, KeyCode::Char('R')).await;
+    assert_eq!(app.state().view, ViewMode::ResourceList);
+    assert_eq!(
+        app.state().current_resource_group.as_deref(),
+        Some("rg-app")
+    );
+    while app.state().loading {
+        app.apply_load(loads.recv().await.unwrap());
+    }
+    press(&mut app, KeyCode::Esc).await;
+    assert_eq!(app.state().view, ViewMode::ResourceDetail);
 }

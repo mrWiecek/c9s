@@ -128,6 +128,10 @@ pub struct AppState {
     /// `s` open: the highlighted column in the "Sort by" list
     pub sort_picker: Option<usize>,
 
+    /// A row to highlight once a list loads (view, row ID), unless the
+    /// user has moved the cursor by then (`R`, `S`)
+    pub select_on_load: Option<(ViewMode, String)>,
+
     /// How `:cost` is set up (period, granularity, grouping, cost type,
     /// currency), kept across scopes
     pub cost_settings: crate::cost::CostSettings,
@@ -1606,7 +1610,57 @@ impl AppState {
                 Some(crate::detail::tags(self.resource_document.as_ref(), resource).len())
             }
             DetailTab::Policy => Some(self.detail_policy_states().map_or(0, |r| r.len())),
-            DetailTab::Overview | DetailTab::Json => None,
+            DetailTab::Overview => Some(self.detail_overview()?.iter().map(|s| s.rows.len()).sum()),
+            DetailTab::Json => None,
+        }
+    }
+
+    /// The detail view's Overview, with the subscription named ("prod
+    /// (1234…)") when it is known.
+    pub fn detail_overview(&self) -> Option<Vec<crate::detail::Section>> {
+        let resource = self.selected_resource_detail.as_ref()?;
+        let mut sections = crate::detail::overview(self.resource_document.as_ref(), resource);
+        let name = self
+            .subscriptions
+            .iter()
+            .find(|s| s.id.eq_ignore_ascii_case(&resource.subscription_id))
+            .map(|s| s.name.clone());
+        if let Some(name) = name {
+            for section in &mut sections {
+                for (label, value) in &mut section.rows {
+                    if label == crate::detail::SUBSCRIPTION_ROW
+                        && *value == resource.subscription_id
+                    {
+                        *value = format!("{name} ({value})");
+                    }
+                }
+            }
+        }
+        Some(sections)
+    }
+
+    /// The Overview row under the cursor in the detail view: (label, value).
+    pub fn selected_detail_field(&self) -> Option<(String, String)> {
+        if self.view != ViewMode::ResourceDetail || self.detail_tab != DetailTab::Overview {
+            return None;
+        }
+        self.detail_overview()?
+            .into_iter()
+            .flat_map(|s| s.rows)
+            .nth(self.detail_cursor)
+    }
+
+    /// The line of the detail view's content that shows row `row` of the
+    /// current tab (the Policy tab starts with a header line; the Overview
+    /// has section headings).
+    pub fn detail_row_line(&self, row: usize) -> usize {
+        match self.detail_tab {
+            DetailTab::Policy => row + 1,
+            DetailTab::Overview => self
+                .detail_overview()
+                .and_then(|s| crate::detail::row_lines(&s).get(row).copied())
+                .unwrap_or(row),
+            _ => row,
         }
     }
 
@@ -2282,8 +2336,11 @@ impl AppState {
             ViewMode::ResourceGroupList => self
                 .filtered_resource_groups()
                 .iter()
-                .position(|r| r.id == id),
-            ViewMode::ResourceList => self.filtered_resources().iter().position(|r| r.id == id),
+                .position(|r| r.id.eq_ignore_ascii_case(id)),
+            ViewMode::ResourceList => self
+                .filtered_resources()
+                .iter()
+                .position(|r| r.id.eq_ignore_ascii_case(id)),
             ViewMode::ManagementGroupTree => self.tree_rows().iter().position(|r| r.key == id),
             ViewMode::PolicyAssignments => self
                 .policy_rows()
