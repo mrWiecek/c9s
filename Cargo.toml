@@ -32,7 +32,7 @@ crossterm = "0.29"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 serde_json = "1.0"
-rusqlite = { version = "0.41", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 
 # Error handling
 anyhow = "1.0"
